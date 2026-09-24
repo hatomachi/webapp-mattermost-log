@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { MattermostChannel } from '../types/mattermost';
-import { Search, Hash, Lock, User, Users, X, Layers } from 'lucide-react';
+import { ChannelSortOrder, MattermostChannel } from '../types/mattermost';
+import { Search, Hash, Lock, User, Users, X, Layers, ArrowUpDown, Clock, ArrowDownAZ } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -9,7 +9,21 @@ interface Props {
   onSelectChannel: (channel: MattermostChannel) => void;
   onClose: () => void;
   showTeamBadge: boolean;
+  sortOrder: ChannelSortOrder;
+  onToggleSortOrder: (order: ChannelSortOrder) => void;
 }
+
+const formatRelativeTime = (timestamp?: number): string => {
+  if (!timestamp || timestamp <= 0) return '';
+  const now = Date.now();
+  const diff = now - timestamp;
+  if (diff < 60 * 1000) return '今';
+  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))}分前`;
+  if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / (60 * 60 * 1000))}h前`;
+  if (diff < 7 * 24 * 60 * 60 * 1000) return `${Math.floor(diff / (24 * 60 * 60 * 1000))}d前`;
+  const d = new Date(timestamp);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+};
 
 export const ChannelSidebar: React.FC<Props> = ({
   isOpen,
@@ -18,12 +32,14 @@ export const ChannelSidebar: React.FC<Props> = ({
   onSelectChannel,
   onClose,
   showTeamBadge,
+  sortOrder,
+  onToggleSortOrder,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [selectedType, setSelectedType] = useState<string>('ALL');
 
-  const filteredChannels = useMemo(() => {
-    return channels.filter((ch) => {
+  const filteredAndSortedChannels = useMemo(() => {
+    const filtered = channels.filter((ch) => {
       // Type filter
       if (selectedType !== 'ALL') {
         if (selectedType === 'CHANNELS' && ch.type !== 'O' && ch.type !== 'P') return false;
@@ -38,7 +54,22 @@ export const ChannelSidebar: React.FC<Props> = ({
       const matchTeam = (ch.team_display_name || '').toLowerCase().includes(q);
       return matchName || matchDisplay || matchTeam;
     });
-  }, [channels, filterText, selectedType]);
+
+    return [...filtered].sort((a, b) => {
+      if (sortOrder === 'recent') {
+        const timeA = a.last_post_at || 0;
+        const timeB = b.last_post_at || 0;
+        if (timeB !== timeA) {
+          return timeB - timeA;
+        }
+      }
+      if (a.type !== b.type) {
+        if (a.type === 'O') return -1;
+        if (b.type === 'O') return 1;
+      }
+      return (a.display_name || a.name).localeCompare(b.display_name || b.name, 'ja');
+    });
+  }, [channels, filterText, selectedType, sortOrder]);
 
   const getChannelIcon = (type: string) => {
     switch (type) {
@@ -70,7 +101,7 @@ export const ChannelSidebar: React.FC<Props> = ({
             <Layers className="w-3.5 h-3.5 text-emerald-400" />
             <span>チャンネル一覧</span>
             <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1 rounded">
-              {filteredChannels.length}
+              {filteredAndSortedChannels.length}
             </span>
           </div>
           <button
@@ -102,52 +133,74 @@ export const ChannelSidebar: React.FC<Props> = ({
             )}
           </div>
 
-          {/* Quick Filter tabs */}
-          <div className="flex space-x-1 text-[10px]">
+          {/* Quick Filter tabs & Sort Toggle */}
+          <div className="flex items-center justify-between text-[10px] pt-0.5">
+            <div className="flex space-x-1">
+              <button
+                onClick={() => setSelectedType('ALL')}
+                className={`px-1.5 py-0.5 rounded transition-colors ${
+                  selectedType === 'ALL'
+                    ? 'bg-zinc-800 text-zinc-100 font-bold'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                全件
+              </button>
+              <button
+                onClick={() => setSelectedType('CHANNELS')}
+                className={`px-1.5 py-0.5 rounded transition-colors ${
+                  selectedType === 'CHANNELS'
+                    ? 'bg-zinc-800 text-zinc-100 font-bold'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                Ch
+              </button>
+              <button
+                onClick={() => setSelectedType('DM')}
+                className={`px-1.5 py-0.5 rounded transition-colors ${
+                  selectedType === 'DM'
+                    ? 'bg-zinc-800 text-zinc-100 font-bold'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                DM
+              </button>
+            </div>
+
+            {/* Sort Toggle Button */}
             <button
-              onClick={() => setSelectedType('ALL')}
-              className={`px-2 py-0.5 rounded transition-colors ${
-                selectedType === 'ALL'
-                  ? 'bg-zinc-800 text-zinc-100 font-bold'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
+              onClick={() => onToggleSortOrder(sortOrder === 'recent' ? 'name' : 'recent')}
+              className="flex items-center space-x-1 px-1.5 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-300 transition-colors"
+              title={sortOrder === 'recent' ? '最新更新順（クリックで名前順へ）' : '名前順（クリックで最新更新順へ）'}
             >
-              全件
-            </button>
-            <button
-              onClick={() => setSelectedType('CHANNELS')}
-              className={`px-2 py-0.5 rounded transition-colors ${
-                selectedType === 'CHANNELS'
-                  ? 'bg-zinc-800 text-zinc-100 font-bold'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              チャンネル
-            </button>
-            <button
-              onClick={() => setSelectedType('DM')}
-              className={`px-2 py-0.5 rounded transition-colors ${
-                selectedType === 'DM'
-                  ? 'bg-zinc-800 text-zinc-100 font-bold'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              DM / グループ
+              {sortOrder === 'recent' ? (
+                <>
+                  <Clock className="w-2.5 h-2.5 text-emerald-400" />
+                  <span>更新順</span>
+                </>
+              ) : (
+                <>
+                  <ArrowDownAZ className="w-2.5 h-2.5 text-sky-400" />
+                  <span>名前順</span>
+                </>
+              )}
             </button>
           </div>
         </div>
 
         {/* Flat Channel List */}
         <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
-          {filteredChannels.length === 0 ? (
+          {filteredAndSortedChannels.length === 0 ? (
             <div className="p-4 text-center text-xs text-zinc-500 italic">
               {channels.length === 0
                 ? 'チャンネルがありません。設定からチームを選択してください。'
                 : '一致するチャンネルがありません'}
             </div>
           ) : (
-            filteredChannels.map((ch) => {
+            filteredAndSortedChannels.map((ch) => {
               const isActive = ch.id === activeChannelId;
+              const relativeTime = formatRelativeTime(ch.last_post_at);
               return (
                 <button
                   key={ch.id}
@@ -165,7 +218,7 @@ export const ChannelSidebar: React.FC<Props> = ({
                   {showTeamBadge && ch.team_display_name && (
                     <span
                       title={ch.team_display_name}
-                      className={`text-[9px] px-1 py-0.2 rounded shrink-0 max-w-[65px] truncate border ${
+                      className={`text-[9px] px-1 py-0.2 rounded shrink-0 max-w-[60px] truncate border ${
                         isActive
                           ? 'bg-emerald-900/60 border-emerald-700 text-emerald-200'
                           : 'bg-zinc-900 border-zinc-800 text-zinc-400 group-hover:border-zinc-700'
@@ -178,6 +231,12 @@ export const ChannelSidebar: React.FC<Props> = ({
                   <span className="text-xs truncate flex-1 font-mono">
                     {ch.display_name || ch.name}
                   </span>
+
+                  {relativeTime && (
+                    <span className="text-[10px] text-zinc-600 shrink-0 font-normal">
+                      {relativeTime}
+                    </span>
+                  )}
                 </button>
               );
             })
@@ -187,3 +246,4 @@ export const ChannelSidebar: React.FC<Props> = ({
     </>
   );
 };
+

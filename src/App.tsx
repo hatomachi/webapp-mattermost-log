@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   AppSettings,
+  ChannelSortOrder,
   MattermostChannel,
   MattermostPost,
   MattermostTeam,
@@ -18,6 +19,7 @@ import {
   getMyTeams,
   getTeamChannels,
   getChannelPosts,
+  getPostThread,
   getUsersByIds,
 } from './services/mattermost';
 import { Header } from './components/Header';
@@ -36,6 +38,11 @@ export const App: React.FC = () => {
   const [userCache, setUserCache] = useState<Record<string, MattermostUser>>(loadUserCache);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [hasMorePosts, setHasMorePosts] = useState(true);
+  const [threadPosts, setThreadPosts] = useState<Record<string, MattermostPost[]>>({});
+  const [loadingThreads, setLoadingThreads] = useState<Record<string, boolean>>({});
+
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -47,6 +54,38 @@ export const App: React.FC = () => {
       setIsSettingsOpen(true);
     }
   }, [isConnected]);
+
+  // 未キャッシュのユーザープロファイルを解決するヘルパー
+  const resolveMissingUsers = useCallback(
+    async (userIdList: string[]) => {
+      const missingUserIds = Array.from(
+        new Set(userIdList.filter((uid) => uid && !userCache[uid]))
+      );
+      if (missingUserIds.length === 0) return;
+
+      try {
+        const fetchedUsers = await getUsersByIds(
+          settings.serverUrl,
+          settings.token,
+          missingUserIds,
+          settings.corsProxy
+        );
+        if (fetchedUsers.length > 0) {
+          setUserCache((prev) => {
+            const updated = { ...prev };
+            fetchedUsers.forEach((u) => {
+              updated[u.id] = u;
+            });
+            saveUserCache(updated);
+            return updated;
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to fetch user profiles:', e);
+      }
+    },
+    [settings.serverUrl, settings.token, settings.corsProxy, userCache]
+  );
 
   // チャンネル一覧の取得
   const fetchChannels = useCallback(async (currentSettings: AppSettings) => {
@@ -94,15 +133,6 @@ export const App: React.FC = () => {
         new Map(allChannels.map((c) => [c.id, c])).values()
       );
 
-      // ソート：公開/非公開チャンネル優先、名前順
-      uniqueChannels.sort((a, b) => {
-        if (a.type !== b.type) {
-          if (a.type === 'O') return -1;
-          if (b.type === 'O') return 1;
-        }
-        return (a.display_name || a.name).localeCompare(b.display_name || b.name, 'ja');
-      });
-
       setChannels(uniqueChannels);
 
       // アクティブチャンネルが未設定、または存在しない場合は先頭を選択
@@ -127,7 +157,7 @@ export const App: React.FC = () => {
     }
   }, [settings.serverUrl, settings.token, settings.selectedTeamIds, settings.corsProxy]);
 
-  // メッセージログの取得
+  // メッセージログの取得（最新ログ）
   const fetchPosts = useCallback(async (channelId: string, silent = false) => {
     if (!settings.serverUrl || !settings.token || !channelId) return;
 
@@ -139,54 +169,94 @@ export const App: React.FC = () => {
         channelId,
         0,
         60,
+        undefined,
         settings.corsProxy
       );
 
       const postList = res.order.map((id) => res.posts[id]).filter(Boolean);
       setPosts(postList);
+      setHasMorePosts(postList.length >= 60);
       setLastUpdated(new Date());
 
       // 未解決のユーザー情報をまとめて取得
-      const missingUserIds = Array.from(
-        new Set(
-          postList
-            .map((p) => p.user_id)
-            .filter((uid) => uid && !userCache[uid])
-        )
-      );
-
-      if (missingUserIds.length > 0) {
-        try {
-          const fetchedUsers = await getUsersByIds(
-            settings.serverUrl,
-            settings.token,
-            missingUserIds,
-            settings.corsProxy
-          );
-          if (fetchedUsers.length > 0) {
-            setUserCache((prev) => {
-              const updated = { ...prev };
-              fetchedUsers.forEach((u) => {
-                updated[u.id] = u;
-              });
-              saveUserCache(updated);
-              return updated;
-            });
-          }
-        } catch (e) {
-          console.warn('Failed to fetch user profiles:', e);
-        }
-      }
+      await resolveMissingUsers(postList.map((p) => p.user_id));
     } catch (err: any) {
       console.error('Failed to fetch posts:', err);
     } finally {
       if (!silent) setIsLoading(false);
     }
-  }, [settings.serverUrl, settings.token, settings.corsProxy, userCache]);
+  }, [settings.serverUrl, settings.token, settings.corsProxy, resolveMissingUsers]);
 
-  // アクティブチャンネル変更時に投稿取得
+  // 過去ログ追加取得 (Pagination)
+  const handleLoadOlderPosts = useCallback(async () => {
+    if (!settings.serverUrl || !settings.token || !activeChannelId || isLoadingOlder) return;
+
+    // 現在取得済みの最も古い投稿IDを取得
+    const sorted = [...posts].sort((a, b) => a.create_at - b.create_at);
+    const oldestPost = sorted[0];
+    if (!oldestPost) return;
+
+    setIsLoadingOlder(true);
+    try {
+      const res = await getChannelPosts(
+        settings.serverUrl,
+        settings.token,
+        activeChannelId,
+        0,
+        60,
+        oldestPost.id,
+        settings.corsProxy
+      );
+
+      const olderPostList = res.order.map((id) => res.posts[id]).filter(Boolean);
+
+      if (olderPostList.length === 0) {
+        setHasMorePosts(false);
+      } else {
+        // 重複を除外して既存の投稿リストの先頭に追加
+        const existingIds = new Set(posts.map((p) => p.id));
+        const newPosts = olderPostList.filter((p) => !existingIds.has(p.id));
+        setPosts((prev) => [...newPosts, ...prev]);
+        if (olderPostList.length < 60) {
+          setHasMorePosts(false);
+        }
+        await resolveMissingUsers(newPosts.map((p) => p.user_id));
+      }
+    } catch (err: any) {
+      console.error('Failed to load older posts:', err);
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  }, [settings.serverUrl, settings.token, settings.corsProxy, activeChannelId, posts, isLoadingOlder, resolveMissingUsers]);
+
+  // スレッド返信取得
+  const handleFetchThread = useCallback(async (postId: string) => {
+    if (!settings.serverUrl || !settings.token) return;
+
+    setLoadingThreads((prev) => ({ ...prev, [postId]: true }));
+    try {
+      const res = await getPostThread(
+        settings.serverUrl,
+        settings.token,
+        postId,
+        settings.corsProxy
+      );
+      const threadList = res.order.map((id) => res.posts[id]).filter(Boolean);
+      setThreadPosts((prev) => ({ ...prev, [postId]: threadList }));
+      await resolveMissingUsers(threadList.map((p) => p.user_id));
+    } catch (err: any) {
+      console.error(`Failed to fetch thread for post ${postId}:`, err);
+    } finally {
+      setLoadingThreads((prev) => ({ ...prev, [postId]: false }));
+    }
+  }, [settings.serverUrl, settings.token, settings.corsProxy, resolveMissingUsers]);
+
+  // アクティブチャンネル変更時に投稿取得 & スレッド初期化
   useEffect(() => {
     if (activeChannelId) {
+      setThreadPosts({});
+      setLoadingThreads({});
+      setHasMorePosts(true);
       fetchPosts(activeChannelId);
     }
   }, [activeChannelId]);
@@ -214,6 +284,12 @@ export const App: React.FC = () => {
     setSettings(newSettings);
     saveSettings(newSettings);
     fetchChannels(newSettings);
+  };
+
+  const handleToggleSortOrder = (newOrder: ChannelSortOrder) => {
+    const updated: AppSettings = { ...settings, channelSortOrder: newOrder };
+    setSettings(updated);
+    saveSettings(updated);
   };
 
   const activeChannel = channels.find((c) => c.id === activeChannelId);
@@ -253,6 +329,8 @@ export const App: React.FC = () => {
           onSelectChannel={handleSelectChannel}
           onClose={() => setIsSidebarOpen(false)}
           showTeamBadge={settings.showTeamBadge}
+          sortOrder={settings.channelSortOrder || 'recent'}
+          onToggleSortOrder={handleToggleSortOrder}
         />
 
         <LogViewer
@@ -262,6 +340,12 @@ export const App: React.FC = () => {
           fontSize={settings.fontSize}
           isLoading={isLoading}
           channelName={activeChannel?.display_name || activeChannel?.name}
+          hasMorePosts={hasMorePosts}
+          isLoadingOlder={isLoadingOlder}
+          onLoadOlderPosts={handleLoadOlderPosts}
+          threadPosts={threadPosts}
+          loadingThreads={loadingThreads}
+          onFetchThread={handleFetchThread}
         />
       </div>
 
@@ -277,3 +361,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+

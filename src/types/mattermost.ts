@@ -28,6 +28,22 @@ export interface MattermostChannel {
   team_display_name?: string;
 }
 
+export interface MattermostFileInfo {
+  id: string;
+  user_id: string;
+  post_id: string;
+  create_at: number;
+  update_at: number;
+  delete_at: number;
+  name: string;
+  extension: string;
+  size: number;
+  mime_type: string;
+  width?: number;
+  height?: number;
+  has_preview_image?: boolean;
+}
+
 export interface MattermostPost {
   id: string;
   create_at: number;
@@ -44,6 +60,11 @@ export interface MattermostPost {
     [key: string]: any;
   };
   reply_count?: number;
+  file_ids?: string[];
+  metadata?: {
+    files?: MattermostFileInfo[];
+    [key: string]: any;
+  };
 }
 
 export interface MattermostPostListResponse {
@@ -52,6 +73,8 @@ export interface MattermostPostListResponse {
   next_post_id?: string;
   prev_post_id?: string;
 }
+
+export type ChannelSortOrder = 'recent' | 'name';
 
 export interface AppSettings {
   serverUrl: string;
@@ -62,4 +85,6 @@ export interface AppSettings {
   showTeamBadge: boolean;
   autoRefreshInterval: number; // 0, 15, 30, 60
   fontSize: 'xs' | 'sm' | 'base';
+  channelSortOrder: ChannelSortOrder;
 }
+

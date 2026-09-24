@@ -355,6 +355,34 @@ export const SettingsModal: React.FC<Props> = ({
             </div>
 
             <div className="flex items-center justify-between text-[11px] bg-zinc-950 p-2 rounded border border-zinc-800">
+              <span className="text-zinc-300">チャンネル並び順</span>
+              <div className="flex space-x-1">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, channelSortOrder: 'recent' })}
+                  className={`px-2 py-0.5 rounded text-[10px] ${
+                    formData.channelSortOrder === 'recent'
+                      ? 'bg-emerald-600 text-white font-bold'
+                      : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  更新順
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, channelSortOrder: 'name' })}
+                  className={`px-2 py-0.5 rounded text-[10px] ${
+                    formData.channelSortOrder === 'name'
+                      ? 'bg-emerald-600 text-white font-bold'
+                      : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  名前順
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] bg-zinc-950 p-2 rounded border border-zinc-800">
               <span className="text-zinc-300">自動更新間隔</span>
               <select
                 value={formData.autoRefreshInterval}

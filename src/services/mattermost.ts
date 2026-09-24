@@ -125,12 +125,35 @@ export const getChannelPosts = async (
   channelId: string,
   page: number = 0,
   perPage: number = 60,
+  before?: string,
+  corsProxy?: string
+): Promise<MattermostPostListResponse> => {
+  const queryParams = new URLSearchParams({
+    page: String(page),
+    per_page: String(perPage),
+  });
+  if (before) {
+    queryParams.set('before', before);
+  }
+  return request<MattermostPostListResponse>(
+    serverUrl,
+    token,
+    `/api/v4/channels/${channelId}/posts?${queryParams.toString()}`,
+    {},
+    corsProxy
+  );
+};
+
+export const getPostThread = async (
+  serverUrl: string,
+  token: string,
+  postId: string,
   corsProxy?: string
 ): Promise<MattermostPostListResponse> => {
   return request<MattermostPostListResponse>(
     serverUrl,
     token,
-    `/api/v4/channels/${channelId}/posts?page=${page}&per_page=${perPage}`,
+    `/api/v4/posts/${postId}/thread`,
     {},
     corsProxy
   );
@@ -154,6 +177,40 @@ export const getUsersByIds = async (
     },
     corsProxy
   );
+};
+
+/**
+ * 添付ファイルのBlobURLを取得（認証ヘッダー付きでフェッチ）
+ */
+export const fetchFileBlobUrl = async (
+  serverUrl: string,
+  token: string,
+  fileId: string,
+  thumbnail: boolean = false,
+  corsProxy?: string
+): Promise<string> => {
+  const path = thumbnail ? `/api/v4/files/${fileId}/thumbnail` : `/api/v4/files/${fileId}`;
+  const url = buildUrl(serverUrl, path, corsProxy);
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token.trim()}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load file: ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+};
+
+/**
+ * ファイルサイズを人間が読みやすい形式に変換
+ */
+export const formatFileSize = (bytes?: number): string => {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 /**
@@ -181,3 +238,4 @@ export const formatUserDisplayName = (
 
   return user.username || fallbackUsername || '不明';
 };
+

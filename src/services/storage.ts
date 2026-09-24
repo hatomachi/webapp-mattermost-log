@@ -13,7 +13,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showTeamBadge: true,
   autoRefreshInterval: 30,
   fontSize: 'xs',
+  channelSortOrder: 'recent',
 };
+
 
 export const loadSettings = (): AppSettings => {
   try {
