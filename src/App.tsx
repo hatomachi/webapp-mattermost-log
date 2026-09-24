@@ -61,11 +61,16 @@ export const App: React.FC = () => {
     }
   }, [isConnected]);
 
+  const userCacheRef = useRef(userCache);
+  useEffect(() => {
+    userCacheRef.current = userCache;
+  }, [userCache]);
+
   // 未キャッシュのユーザープロファイルを解決するヘルパー
   const resolveMissingUsers = useCallback(
     async (userIdList: string[]) => {
       const missingUserIds = Array.from(
-        new Set(userIdList.filter((uid) => uid && !userCache[uid]))
+        new Set(userIdList.filter((uid) => uid && !userCacheRef.current[uid]))
       );
       if (missingUserIds.length === 0) return;
 
@@ -90,7 +95,7 @@ export const App: React.FC = () => {
         console.warn('Failed to fetch user profiles:', e);
       }
     },
-    [settings.serverUrl, settings.token, settings.corsProxy, userCache]
+    [settings.serverUrl, settings.token, settings.corsProxy]
   );
 
   // チャンネル一覧の取得
@@ -316,16 +321,16 @@ export const App: React.FC = () => {
     }
   }, [activeChannelId]);
 
-  // 自動更新タイマー (ポーリング)
+  // 自動更新タイマー (ポーリング: 通常ログビュー表示時のみ動作)
   useEffect(() => {
-    if (!activeChannelId || settings.autoRefreshInterval <= 0) return;
+    if (viewMode !== 'log' || !activeChannelId || settings.autoRefreshInterval <= 0) return;
 
     const timer = setInterval(() => {
       fetchPosts(activeChannelId, true);
     }, settings.autoRefreshInterval * 1000);
 
     return () => clearInterval(timer);
-  }, [activeChannelId, settings.autoRefreshInterval, fetchPosts]);
+  }, [viewMode, activeChannelId, settings.autoRefreshInterval, fetchPosts]);
 
   const handleSelectChannel = (channel: MattermostChannel) => {
     setActiveChannelId(channel.id);

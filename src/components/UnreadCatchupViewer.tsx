@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   MattermostChannel,
   MattermostChannelMember,
@@ -48,6 +48,13 @@ interface Props {
   onRefreshUnreads: () => Promise<void>;
 }
 
+interface UnreadChannelItem {
+  channel: MattermostChannel;
+  member: MattermostChannelMember;
+  unreadCount: number;
+  mentionCount: number;
+}
+
 interface ChannelCatchupState {
   channel: MattermostChannel;
   member: MattermostChannelMember;
@@ -80,6 +87,20 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   const [channelStates, setChannelStates] = useState<Record<string, ChannelCatchupState>>({});
   const [isInitializing, setIsInitializing] = useState(true);
   const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // 関数・プロパティを ref に保持して useEffect の不要な再実行を防ぐ
+  const resolveMissingUsersRef = useRef(resolveMissingUsers);
+  resolveMissingUsersRef.current = resolveMissingUsers;
+
+  const serverUrlRef = useRef(serverUrl);
+  serverUrlRef.current = serverUrl;
+
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+
+  const corsProxyRef = useRef(corsProxy);
+  corsProxyRef.current = corsProxy;
 
   const fontClass = {
     xs: 'text-xs leading-[1.35]',
@@ -123,15 +144,20 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
       });
   }, [channels, channelMembers]);
 
-  // 2. 未読チャンネルの初期化と投稿データ取得
+  // unreadChannels を ref で保持
+  const unreadChannelsRef = useRef<UnreadChannelItem[]>(unreadChannels);
+  unreadChannelsRef.current = unreadChannels;
+
+  // 2. 初回マウント時および refreshKey 変更時のみ投稿データ取得を実行
   useEffect(() => {
     let isCancelled = false;
+    const currentUnreads = unreadChannelsRef.current;
 
     const initAndFetchPosts = async () => {
       setIsInitializing(true);
 
       const initialStates: Record<string, ChannelCatchupState> = {};
-      unreadChannels.forEach(({ channel, member, unreadCount, mentionCount }) => {
+      currentUnreads.forEach(({ channel, member, unreadCount, mentionCount }: UnreadChannelItem) => {
         initialStates[channel.id] = {
           channel,
           member,
@@ -146,22 +172,21 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
 
       setChannelStates(initialStates);
 
-      // 各未読チャンネルの投稿を並列フェッチ (同時実行数を制御しながら取得)
-      const fetchChannel = async (item: typeof unreadChannels[0]) => {
+      // 各未読チャンネルの投稿をフェッチ
+      const fetchChannel = async (item: UnreadChannelItem) => {
         const { channel, member } = item;
         try {
-          // since に last_viewed_at を指定して新着のみ取得
           const since = member.last_viewed_at > 0 ? member.last_viewed_at : undefined;
           const fetchLimit = Math.min(Math.max(item.unreadCount + 5, 20), 60);
 
           const res = await getChannelPosts(
-            serverUrl,
-            token,
+            serverUrlRef.current,
+            tokenRef.current,
             channel.id,
             0,
             fetchLimit,
             undefined,
-            corsProxy,
+            corsProxyRef.current,
             since
           );
 
@@ -170,13 +195,13 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
           // 万一 since 以降が0件だった場合、最新ログをフォールバック取得
           if (postList.length === 0) {
             const fallbackRes = await getChannelPosts(
-              serverUrl,
-              token,
+              serverUrlRef.current,
+              tokenRef.current,
               channel.id,
               0,
               Math.min(item.unreadCount || 5, 20),
               undefined,
-              corsProxy
+              corsProxyRef.current
             );
             postList = fallbackRes.order.map((id) => fallbackRes.posts[id]).filter(Boolean);
           }
@@ -198,7 +223,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
             });
 
             // ユーザー名解決
-            await resolveMissingUsers(postList.map((p) => p.user_id));
+            await resolveMissingUsersRef.current(postList.map((p) => p.user_id));
           }
         } catch (err: any) {
           if (!isCancelled) {
@@ -217,12 +242,12 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
         }
       };
 
-      // 5チャンネルずつバッチ実行して過負荷を回避
+      // 5チャンネルずつバッチ実行
       const chunkSize = 5;
-      for (let i = 0; i < unreadChannels.length; i += chunkSize) {
+      for (let i = 0; i < currentUnreads.length; i += chunkSize) {
         if (isCancelled) break;
-        const chunk = unreadChannels.slice(i, i + chunkSize);
-        await Promise.all(chunk.map((item) => fetchChannel(item)));
+        const chunk = currentUnreads.slice(i, i + chunkSize);
+        await Promise.all(chunk.map((item: UnreadChannelItem) => fetchChannel(item)));
       }
 
       if (!isCancelled) {
@@ -230,7 +255,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
       }
     };
 
-    if (unreadChannels.length > 0) {
+    if (currentUnreads.length > 0) {
       initAndFetchPosts();
     } else {
       setIsInitializing(false);
@@ -240,7 +265,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     return () => {
       isCancelled = true;
     };
-  }, [unreadChannels, serverUrl, token, corsProxy, resolveMissingUsers]);
+  }, [refreshKey]);
 
   // 3. 単一チャンネルの既読化
   const handleMarkAsRead = async (channelId: string) => {
@@ -439,6 +464,15 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     }
   };
 
+  const handleManualRefresh = async () => {
+    setIsInitializing(true);
+    try {
+      await onRefreshUnreads();
+    } finally {
+      setRefreshKey((k) => k + 1);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full bg-zinc-950 font-mono overflow-hidden">
       {/* Top Action Bar */}
@@ -466,7 +500,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
 
         <div className="flex items-center space-x-2">
           <button
-            onClick={() => onRefreshUnreads()}
+            onClick={handleManualRefresh}
             disabled={isInitializing}
             className="flex items-center space-x-1 text-[11px] text-zinc-400 hover:text-zinc-100 px-2 py-1 rounded hover:bg-zinc-800 transition-colors disabled:opacity-50"
             title="未読チャンネルを再検索"
