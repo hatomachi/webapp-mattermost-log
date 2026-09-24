@@ -24,6 +24,7 @@ import {
   getChannelPosts,
   getPostThread,
   getUsersByIds,
+  createPost,
 } from './services/mattermost';
 import { Header } from './components/Header';
 import { ChannelSidebar } from './components/ChannelSidebar';
@@ -311,6 +312,66 @@ export const App: React.FC = () => {
     }
   }, [settings.serverUrl, settings.token, settings.corsProxy, resolveMissingUsers]);
 
+  // メッセージ投稿・スレッド返信ハンドラー
+  const handleSendPost = useCallback(
+    async (message: string, rootId?: string): Promise<boolean> => {
+      if (!settings.serverUrl || !settings.token || !activeChannelId) {
+        throw new Error('サーバーに接続されていないか、チャンネルが未選択です');
+      }
+
+      const newPost = await createPost(
+        settings.serverUrl,
+        settings.token,
+        activeChannelId,
+        message,
+        rootId,
+        settings.corsProxy
+      );
+
+      // 新規親投稿の場合
+      if (!rootId) {
+        setPosts((prev) => [...prev, newPost]);
+        // チャンネル一覧の最終投稿日時とメッセージ数を更新
+        setChannels((prev) =>
+          prev.map((c) =>
+            c.id === activeChannelId
+              ? {
+                  ...c,
+                  last_post_at: newPost.create_at,
+                  total_msg_count: (c.total_msg_count || 0) + 1,
+                }
+              : c
+          )
+        );
+        if (!userCache[newPost.user_id]) {
+          await resolveMissingUsers([newPost.user_id]);
+        }
+      } else {
+        // スレッド返信の場合: 親投稿の返信数とスレッドリストを更新
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === rootId
+              ? { ...p, reply_count: (p.reply_count || 0) + 1 }
+              : p
+          )
+        );
+        setThreadPosts((prev) => {
+          const current = prev[rootId] || [];
+          return {
+            ...prev,
+            [rootId]: [...current, newPost],
+          };
+        });
+        if (!userCache[newPost.user_id]) {
+          await resolveMissingUsers([newPost.user_id]);
+        }
+      }
+
+      return true;
+    },
+    [settings.serverUrl, settings.token, settings.corsProxy, activeChannelId, userCache, resolveMissingUsers]
+  );
+
   // アクティブチャンネル変更時に投稿取得 & スレッド初期化
   useEffect(() => {
     if (activeChannelId) {
@@ -458,6 +519,7 @@ export const App: React.FC = () => {
             threadPosts={threadPosts}
             loadingThreads={loadingThreads}
             onFetchThread={handleFetchThread}
+            onSendPost={handleSendPost}
           />
         )}
       </div>

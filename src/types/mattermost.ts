@@ -124,4 +124,10 @@ export interface AppSettings {
   collapseNewlines: boolean;
 }
 
-
+export interface ReplyTarget {
+  rootId: string;
+  postId: string;
+  authorName: string;
+  messagePreview: string;
+  createAt: number;
+}

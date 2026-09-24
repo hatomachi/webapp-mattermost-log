@@ -434,4 +434,34 @@ export const formatEmojiDisplay = (emojiName: string): { display: string; isUnic
   return { display: `:${cleanName}:`, isUnicode: false };
 };
 
+/**
+ * チャンネルにメッセージを新規投稿、またはスレッドに返信
+ */
+export const createPost = async (
+  serverUrl: string,
+  token: string,
+  channelId: string,
+  message: string,
+  rootId?: string,
+  corsProxy?: string
+): Promise<MattermostPost> => {
+  const payload: { channel_id: string; message: string; root_id?: string } = {
+    channel_id: channelId,
+    message: message.trim(),
+  };
 
+  if (rootId && rootId.trim() !== '') {
+    payload.root_id = rootId.trim();
+  }
+
+  return request<MattermostPost>(
+    serverUrl,
+    token,
+    '/api/v4/posts',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    corsProxy
+  );
+};
