@@ -87,6 +87,20 @@ export function deriveWsUrl(hubUrl: string, authToken: string): string {
   }
 }
 
+// Exponential backoff configuration
+const RECONNECT_BASE_DELAY_MS = 2000;    // Minimum wait: 2000ms (no immediate reconnect)
+const RECONNECT_MAX_DELAY_MS = 30000;    // Max wait: 30s
+const RECONNECT_BACKOFF_FACTOR = 1.5;    // Multiplier: 1.5x
+const RECONNECT_JITTER_RATIO = 0.2;      // Jitter: ±20%
+const STATUS_REQUEST_THROTTLE_MS = 2000; // Throttle get_status requests: at least 2s
+
+function calculateBackoffDelay(retryCount: number): number {
+  const exponential = RECONNECT_BASE_DELAY_MS * Math.pow(RECONNECT_BACKOFF_FACTOR, retryCount);
+  const capped = Math.min(exponential, RECONNECT_MAX_DELAY_MS);
+  const jitter = capped * RECONNECT_JITTER_RATIO * (Math.random() * 2 - 1);
+  return Math.max(RECONNECT_BASE_DELAY_MS, Math.round(capped + jitter));
+}
+
 export interface UseAiRemoteClientOptions {
   settings: AiRemoteSettings;
   onDelta?: (text: string) => void;
@@ -107,8 +121,14 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
 
   const wsRef = useRef<WebSocket | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimerRef = useRef<any>(null);
-  const fallbackTimerRef = useRef<any>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resetRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
+  const lastStatusSentTimeRef = useRef(0);
+
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   const callbacksRef = useRef({ onDelta, onStatusMessage, onTurnStart, onTurnEnd, onError });
   callbacksRef.current = { onDelta, onStatusMessage, onTurnStart, onTurnEnd, onError };
@@ -176,7 +196,7 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
     }
   }, []);
 
-  // Cleanup connections
+  // Cleanup all connections and timers
   const cleanup = useCallback(() => {
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -186,23 +206,90 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       clearTimeout(fallbackTimerRef.current);
       fallbackTimerRef.current = null;
     }
+    if (resetRetryTimerRef.current) {
+      clearTimeout(resetRetryTimerRef.current);
+      resetRetryTimerRef.current = null;
+    }
     if (wsRef.current) {
+      wsRef.current.onopen = null;
+      wsRef.current.onmessage = null;
       wsRef.current.onclose = null;
       wsRef.current.onerror = null;
-      wsRef.current.close();
+      try {
+        wsRef.current.close();
+      } catch {
+        // ignore
+      }
       wsRef.current = null;
     }
     if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+      // Must detach all listeners before closing to prevent browser ghost events
+      eventSourceRef.current.onopen = null;
+      eventSourceRef.current.onmessage = null;
+      eventSourceRef.current.onerror = null;
+      try {
+        eventSourceRef.current.close();
+      } catch {
+        // ignore
+      }
       eventSourceRef.current = null;
     }
     setActiveTransport('none');
   }, []);
 
-  // HTTP (SSE + POST) Connect
+  // Stable connection handler: reset retry count after maintaining connection for 5s
+  const onConnectionEstablished = useCallback((transport: 'ws' | 'http') => {
+    setIsHubConnected(true);
+    setActiveTransport(transport);
+
+    if (resetRetryTimerRef.current) {
+      clearTimeout(resetRetryTimerRef.current);
+    }
+    resetRetryTimerRef.current = setTimeout(() => {
+      resetRetryTimerRef.current = null;
+      retryCountRef.current = 0;
+      console.log('[AiRemoteClient] Connection has been stable for 5s. Reset retry counter.');
+    }, 5000);
+  }, []);
+
+  // Forward declarations for connect functions
+  const connectHttpRef = useRef<() => void>(() => {});
+  const connectWsRef = useRef<() => void>(() => {});
+
+  // Schedule reconnect with exponential backoff & jitter (strictly forbids immediate reconnection)
+  const scheduleReconnect = useCallback((targetMode?: 'ws' | 'http') => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    const currentRetry = retryCountRef.current;
+    const delay = calculateBackoffDelay(currentRetry);
+    retryCountRef.current = currentRetry + 1;
+
+    console.log(`[AiRemoteClient] Scheduling reconnect in ${delay}ms (attempt #${currentRetry + 1})`);
+
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      if (targetMode === 'http') {
+        connectHttpRef.current();
+      } else if (targetMode === 'ws') {
+        connectWsRef.current();
+      } else {
+        const mode = settingsRef.current.transportMode || 'auto';
+        if (mode === 'http') {
+          connectHttpRef.current();
+        } else {
+          connectWsRef.current();
+        }
+      }
+    }, delay);
+  }, []);
+
+  // HTTP (SSE + POST) Connect: GUARANTEES AT MOST ONE SSE CONNECTION
   const connectHttp = useCallback(() => {
     cleanup();
-    const { hubUrl, authToken } = settings;
+    const { hubUrl, authToken } = settingsRef.current;
     if (!hubUrl || !authToken) {
       setIsHubConnected(false);
       setIsAgentConnected(false);
@@ -213,14 +300,20 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       const { eventsUrl, messageUrl } = deriveHttpUrls(hubUrl, authToken);
       console.log('[AiRemoteClient] Connecting via HTTP (SSE):', eventsUrl);
 
+      // EventSource singleton: previous instance is closed in cleanup()
       const es = new EventSource(eventsUrl);
       eventSourceRef.current = es;
 
       es.onopen = () => {
         console.log('[AiRemoteClient] Connected via HTTP (SSE)');
-        setIsHubConnected(true);
-        setActiveTransport('http');
-        postHttpMessage({ type: 'get_status' }, messageUrl);
+        onConnectionEstablished('http');
+
+        // Throttled initial get_status (at least 2s apart)
+        const now = Date.now();
+        if (now - lastStatusSentTimeRef.current >= STATUS_REQUEST_THROTTLE_MS) {
+          lastStatusSentTimeRef.current = now;
+          postHttpMessage({ type: 'get_status' }, messageUrl);
+        }
       };
 
       es.onmessage = (event) => {
@@ -233,21 +326,39 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       };
 
       es.onerror = (err) => {
-        console.warn('[AiRemoteClient] SSE disconnected:', err);
+        console.warn('[AiRemoteClient] SSE disconnected or error:', err);
         setIsHubConnected(false);
         setIsAgentConnected(false);
         setIsExecuting(false);
+
+        // CRITICAL: Close EventSource immediately to kill browser's native rapid retry loop!
+        if (eventSourceRef.current) {
+          eventSourceRef.current.onopen = null;
+          eventSourceRef.current.onmessage = null;
+          eventSourceRef.current.onerror = null;
+          try {
+            eventSourceRef.current.close();
+          } catch {
+            // ignore
+          }
+          eventSourceRef.current = null;
+        }
+
+        // Schedule next connection using exponential backoff (no immediate retry)
+        scheduleReconnect('http');
       };
     } catch (e) {
-      console.error('[AiRemoteClient] SSE create failed:', e);
-      reconnectTimerRef.current = setTimeout(connectHttp, 4000);
+      console.error('[AiRemoteClient] SSE creation failed:', e);
+      scheduleReconnect('http');
     }
-  }, [settings, cleanup, postHttpMessage, handleInboundMessage]);
+  }, [cleanup, onConnectionEstablished, handleInboundMessage, postHttpMessage, scheduleReconnect]);
+
+  connectHttpRef.current = connectHttp;
 
   // WebSocket Connect
   const connectWs = useCallback(() => {
     cleanup();
-    const { hubUrl, authToken, transportMode = 'auto' } = settings;
+    const { hubUrl, authToken, transportMode = 'auto' } = settingsRef.current;
     if (!hubUrl || !authToken) {
       setIsHubConnected(false);
       setIsAgentConnected(false);
@@ -260,10 +371,14 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
+      let hasHandshakeTimedOut = false;
+
       if (transportMode === 'auto') {
         fallbackTimerRef.current = setTimeout(() => {
+          fallbackTimerRef.current = null;
           if (wsRef.current && wsRef.current.readyState !== WebSocket.OPEN) {
             console.warn('[AiRemoteClient] WS handshake timeout (3.5s). Falling back to HTTP (SSE+POST)...');
+            hasHandshakeTimedOut = true;
             connectHttp();
           }
         }, 3500);
@@ -275,8 +390,7 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
           fallbackTimerRef.current = null;
         }
         console.log('[AiRemoteClient] Connected to Hub via WebSocket');
-        setIsHubConnected(true);
-        setActiveTransport('ws');
+        onConnectionEstablished('ws');
         ws.send(JSON.stringify({ type: 'get_status' }));
       };
 
@@ -301,60 +415,116 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
         setActiveTransport('none');
         wsRef.current = null;
 
+        if (fallbackTimerRef.current) {
+          clearTimeout(fallbackTimerRef.current);
+          fallbackTimerRef.current = null;
+        }
+
+        if (hasHandshakeTimedOut) {
+          // Already falling back to HTTP
+          return;
+        }
+
+        // Reconnect with exponential backoff; no immediate reconnection allowed
         if (transportMode === 'auto') {
-          console.log('[AiRemoteClient] Switching to HTTP (SSE+POST)...');
-          connectHttp();
+          console.log('[AiRemoteClient] WebSocket closed in auto mode. Scheduling HTTP fallback with backoff...');
+          scheduleReconnect('http');
         } else {
-          reconnectTimerRef.current = setTimeout(connectWs, 3000);
+          scheduleReconnect('ws');
         }
       };
 
       ws.onerror = (err) => {
         console.error('[AiRemoteClient] WebSocket error:', err);
-        if (transportMode === 'auto') {
-          if (fallbackTimerRef.current) {
-            clearTimeout(fallbackTimerRef.current);
-            fallbackTimerRef.current = null;
-          }
-          connectHttp();
-        }
+        // Do NOT trigger reconnection here; ws.onclose fires immediately after onerror.
+        // Centralizing reconnect handling in ws.onclose prevents duplicate connection attempts.
       };
     } catch (e) {
       console.error('[AiRemoteClient] WebSocket init error:', e);
       if (transportMode === 'auto') {
-        connectHttp();
+        scheduleReconnect('http');
       } else {
-        reconnectTimerRef.current = setTimeout(connectWs, 3000);
+        scheduleReconnect('ws');
       }
     }
-  }, [settings, cleanup, connectHttp, handleInboundMessage]);
+  }, [cleanup, onConnectionEstablished, handleInboundMessage, connectHttp, scheduleReconnect]);
 
-  // Main Connect
+  connectWsRef.current = connectWs;
+
+  // Main Connect dispatcher
   const connect = useCallback(() => {
-    if (settings.transportMode === 'http') {
+    const mode = settingsRef.current.transportMode || 'auto';
+    if (mode === 'http') {
       connectHttp();
     } else {
       connectWs();
     }
-  }, [settings.transportMode, connectWs, connectHttp]);
+  }, [connectHttp, connectWs]);
 
-  // Reconnect on visibility change
+  // Track connection settings changes explicitly to prevent unwanted reconnections on general re-renders
+  const prevConfigRef = useRef({
+    hubUrl: settings.hubUrl,
+    authToken: settings.authToken,
+    transportMode: settings.transportMode,
+  });
+
+  useEffect(() => {
+    const prev = prevConfigRef.current;
+    const curr = {
+      hubUrl: settings.hubUrl,
+      authToken: settings.authToken,
+      transportMode: settings.transportMode,
+    };
+
+    const isChanged =
+      prev.hubUrl !== curr.hubUrl ||
+      prev.authToken !== curr.authToken ||
+      prev.transportMode !== curr.transportMode;
+
+    prevConfigRef.current = curr;
+
+    if (isChanged) {
+      console.log('[AiRemoteClient] Settings changed. Re-establishing connection...');
+      retryCountRef.current = 0;
+      cleanup();
+      connect();
+    }
+  }, [settings.hubUrl, settings.authToken, settings.transportMode, cleanup, connect]);
+
+  // Initial connection on mount
   useEffect(() => {
     connect();
-    return () => cleanup();
-  }, [connect, cleanup]);
+    return () => {
+      cleanup();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Visibility change handling: safe restoration without flood
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        if (!isHubConnected) {
-          connect();
+      if (typeof document === 'undefined') return;
+
+      if (document.visibilityState === 'visible') {
+        console.log('[AiRemoteClient] Page visible again.');
+        // If not connected and no reconnect timer is currently running, schedule with backoff
+        if (!wsRef.current && !eventSourceRef.current && !reconnectTimerRef.current) {
+          scheduleReconnect();
+        } else if (eventSourceRef.current && activeTransport === 'http') {
+          // Throttled status probe
+          const now = Date.now();
+          if (now - lastStatusSentTimeRef.current >= STATUS_REQUEST_THROTTLE_MS) {
+            lastStatusSentTimeRef.current = now;
+            const { hubUrl, authToken } = settingsRef.current;
+            const { messageUrl } = deriveHttpUrls(hubUrl, authToken);
+            postHttpMessage({ type: 'get_status' }, messageUrl);
+          }
         }
       }
     };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [isHubConnected, connect]);
+  }, [activeTransport, scheduleReconnect, postHttpMessage]);
 
   // Send general message
   const send = useCallback((msg: any) => {
@@ -362,13 +532,13 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       wsRef.current.send(JSON.stringify(msg));
       return true;
     } else if (activeTransport === 'http') {
-      const { hubUrl, authToken } = settings;
+      const { hubUrl, authToken } = settingsRef.current;
       const { messageUrl } = deriveHttpUrls(hubUrl, authToken);
       postHttpMessage(msg, messageUrl);
       return true;
     }
     return false;
-  }, [activeTransport, settings, postHttpMessage]);
+  }, [activeTransport, postHttpMessage]);
 
   // Send prompt turn with attachments
   const sendPrompt = useCallback((params: {
@@ -383,8 +553,8 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       type: 'prompt',
       text: fullPrompt,
       sessionId,
-      engine: settings.engine || 'claude',
-      model: settings.model || undefined,
+      engine: settingsRef.current.engine || 'claude',
+      model: settingsRef.current.model || undefined,
       permissionMode: 'acceptEdits',
     };
 
@@ -393,12 +563,20 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       setIsExecuting(true);
     }
     return ok;
-  }, [send, settings.engine, settings.model]);
+  }, [send]);
 
   // Abort current turn
   const abort = useCallback(() => {
     return send({ type: 'abort' });
   }, [send]);
+
+  // Manual reconnect handler (resets backoff)
+  const manualReconnect = useCallback(() => {
+    console.log('[AiRemoteClient] Manual reconnect requested.');
+    retryCountRef.current = 0;
+    cleanup();
+    connect();
+  }, [cleanup, connect]);
 
   return {
     isHubConnected,
@@ -408,6 +586,6 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
     activeTransport,
     sendPrompt,
     abort,
-    reconnect: connect,
+    reconnect: manualReconnect,
   };
 }

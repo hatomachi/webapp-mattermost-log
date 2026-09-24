@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   X,
   Bot,
@@ -72,14 +72,20 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const assistantMsgIdRef = useRef<string | null>(null);
 
-  // Settings for AI Remote Client
-  const clientSettings: AiRemoteSettings = {
+  // Settings for AI Remote Client (memoized to prevent unwanted re-renders)
+  const clientSettings: AiRemoteSettings = useMemo(() => ({
     hubUrl: settings.aiHubUrl || 'ws://localhost:8090/ws/client',
     authToken: settings.aiToken || '',
     engine: settings.aiEngine || 'claude',
     model: settings.aiModel || 'claude-opus-4-7',
     transportMode: settings.aiTransportMode || 'auto',
-  };
+  }), [
+    settings.aiHubUrl,
+    settings.aiToken,
+    settings.aiEngine,
+    settings.aiModel,
+    settings.aiTransportMode,
+  ]);
 
   // Setup AI Remote Client
   const {
