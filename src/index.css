@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #09090b;
+  color: #f4f4f5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbar for compact log view */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #09090b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Safe area support for iOS PWA */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

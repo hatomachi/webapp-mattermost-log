@@ -1,0 +1,123 @@
+import React from 'react';
+import { MattermostChannel } from '../types/mattermost';
+import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal } from 'lucide-react';
+
+interface Props {
+  activeChannel?: MattermostChannel;
+  isConnected: boolean;
+  isLoading: boolean;
+  lastUpdated: Date | null;
+  onRefresh: () => void;
+  onOpenSettings: () => void;
+  onToggleSidebar: () => void;
+}
+
+export const Header: React.FC<Props> = ({
+  activeChannel,
+  isConnected,
+  isLoading,
+  lastUpdated,
+  onRefresh,
+  onOpenSettings,
+  onToggleSidebar,
+}) => {
+  const getChannelIcon = (type?: string) => {
+    switch (type) {
+      case 'P':
+        return <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+      case 'D':
+        return <User className="w-3.5 h-3.5 text-sky-400 shrink-0" />;
+      case 'G':
+        return <Users className="w-3.5 h-3.5 text-purple-400 shrink-0" />;
+      default:
+        return <Hash className="w-3.5 h-3.5 text-zinc-400 shrink-0" />;
+    }
+  };
+
+  const formatLastUpdated = (date: Date | null) => {
+    if (!date) return '';
+    return date.toLocaleTimeString('ja-JP', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  };
+
+  return (
+    <header className="h-11 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between px-3 safe-top shrink-0 select-none font-mono">
+      {/* Left: Sidebar Toggle & Channel Title */}
+      <div className="flex items-center space-x-2 min-w-0">
+        <button
+          onClick={onToggleSidebar}
+          aria-label="Toggle Channels"
+          className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
+        >
+          <Menu className="w-4 h-4" />
+        </button>
+
+        {activeChannel ? (
+          <div className="flex items-center space-x-2 min-w-0">
+            {getChannelIcon(activeChannel.type)}
+            {activeChannel.team_display_name && (
+              <span className="text-[10px] bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded font-mono truncate max-w-[90px] border border-zinc-700">
+                {activeChannel.team_display_name}
+              </span>
+            )}
+            <span className="font-bold text-xs text-zinc-100 truncate">
+              {activeChannel.display_name || activeChannel.name}
+            </span>
+            {activeChannel.header && (
+              <span className="hidden md:inline text-[10px] text-zinc-500 truncate max-w-[280px]">
+                - {activeChannel.header}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center space-x-1.5 text-zinc-400 text-xs">
+            <Terminal className="w-4 h-4 text-emerald-400" />
+            <span className="font-bold text-zinc-200">MatterLog</span>
+            <span className="text-[10px] text-zinc-500">v0.1</span>
+          </div>
+        )}
+      </div>
+
+      {/* Right: Status, Refresh, Settings */}
+      <div className="flex items-center space-x-1 shrink-0 text-xs">
+        {lastUpdated && (
+          <span className="hidden sm:inline text-[10px] text-zinc-500 mr-1.5">
+            {formatLastUpdated(lastUpdated)}
+          </span>
+        )}
+
+        {!isConnected ? (
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center space-x-1 text-[10px] bg-rose-950/80 border border-rose-800 text-rose-300 px-2 py-0.5 rounded hover:bg-rose-900 transition-colors mr-1"
+          >
+            <WifiOff className="w-3 h-3 text-rose-400 animate-pulse" />
+            <span>未接続 (設定)</span>
+          </button>
+        ) : null}
+
+        <button
+          onClick={onRefresh}
+          disabled={isLoading || !isConnected}
+          aria-label="Refresh logs"
+          title="最新ログを取得"
+          className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded disabled:opacity-40 transition-colors"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-400' : ''}`} />
+        </button>
+
+        <button
+          onClick={onOpenSettings}
+          aria-label="Settings"
+          title="接続・表示設定"
+          className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </header>
+  );
+};

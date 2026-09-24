@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#09090b"/>
+  <rect x="32" y="32" width="448" height="448" rx="96" stroke="#27272a" stroke-width="8"/>
+  <!-- Terminal / Log style header -->
+  <circle cx="96" cy="96" r="16" fill="#ef4444"/>
+  <circle cx="144" cy="96" r="16" fill="#eab308"/>
+  <circle cx="192" cy="96" r="16" fill="#22c55e"/>
+  <!-- Prompt & log lines -->
+  <path d="M96 180 L160 230 L96 280" stroke="#38bdf8" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="190" y1="230" x2="360" y2="230" stroke="#38bdf8" stroke-width="24" stroke-linecap="round"/>
+  <!-- Compact log lines -->
+  <line x1="96" y1="330" x2="416" y2="330" stroke="#71717a" stroke-width="16" stroke-linecap="round"/>
+  <line x1="96" y1="380" x2="340" y2="380" stroke="#52525b" stroke-width="16" stroke-linecap="round"/>
+  <line x1="96" y1="430" x2="380" y2="430" stroke="#3f3f46" stroke-width="16" stroke-linecap="round"/>
+</svg>

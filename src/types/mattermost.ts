@@ -1,0 +1,65 @@
+export interface MattermostUser {
+  id: string;
+  username: string;
+  first_name: string;
+  last_name: string;
+  nickname: string;
+}
+
+export interface MattermostTeam {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+}
+
+export type ChannelType = 'O' | 'P' | 'D' | 'G';
+
+export interface MattermostChannel {
+  id: string;
+  team_id: string;
+  name: string;
+  display_name: string;
+  type: ChannelType;
+  header: string;
+  purpose: string;
+  last_post_at: number;
+  total_msg_count: number;
+  team_display_name?: string;
+}
+
+export interface MattermostPost {
+  id: string;
+  create_at: number;
+  update_at: number;
+  delete_at: number;
+  user_id: string;
+  channel_id: string;
+  root_id: string;
+  message: string;
+  type?: string;
+  props?: {
+    from_webhook?: string;
+    override_username?: string;
+    [key: string]: any;
+  };
+  reply_count?: number;
+}
+
+export interface MattermostPostListResponse {
+  order: string[];
+  posts: Record<string, MattermostPost>;
+  next_post_id?: string;
+  prev_post_id?: string;
+}
+
+export interface AppSettings {
+  serverUrl: string;
+  token: string;
+  selectedTeamIds: string[];
+  corsProxy?: string;
+  showSeconds: boolean;
+  showTeamBadge: boolean;
+  autoRefreshInterval: number; // 0, 15, 30, 60
+  fontSize: 'xs' | 'sm' | 'base';
+}
