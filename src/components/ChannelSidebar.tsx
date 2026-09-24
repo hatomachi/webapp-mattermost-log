@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { ChannelSortOrder, MattermostChannel, MattermostChannelMember } from '../types/mattermost';
-import { Search, Hash, Lock, User, Users, X, Layers, Clock, ArrowDownAZ, Sparkles, AtSign } from 'lucide-react';
+import { ChannelSortOrder, MattermostChannel, MattermostChannelMember, MattermostTeam } from '../types/mattermost';
+import { buildMattermostChannelUrl } from '../services/mattermost';
+import { Search, Hash, Lock, User, Users, X, Layers, Clock, ArrowDownAZ, Sparkles, AtSign, ExternalLink } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -13,6 +14,8 @@ interface Props {
   sortOrder: ChannelSortOrder;
   onToggleSortOrder: (order: ChannelSortOrder) => void;
   onOpenCatchup?: () => void;
+  serverUrl?: string;
+  teams?: MattermostTeam[];
 }
 
 const formatRelativeTime = (timestamp?: number): string => {
@@ -38,6 +41,8 @@ export const ChannelSidebar: React.FC<Props> = ({
   sortOrder,
   onToggleSortOrder,
   onOpenCatchup,
+  serverUrl,
+  teams,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [selectedType, setSelectedType] = useState<string>('ALL'); // ALL, UNREAD, CHANNELS, DM
@@ -276,14 +281,24 @@ export const ChannelSidebar: React.FC<Props> = ({
               const isActive = ch.id === activeChannelId;
               const relativeTime = formatRelativeTime(ch.last_post_at);
               const unreadInfo = getUnreadInfo(ch);
+              const channelUrl = serverUrl
+                ? buildMattermostChannelUrl(serverUrl, ch, teams)
+                : '';
 
               return (
-                <button
+                <div
                   key={ch.id}
                   onClick={() => {
                     onSelectChannel(ch);
                   }}
-                  className={`w-full text-left px-2 py-1.5 rounded flex items-center space-x-1.5 transition-colors group ${
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      onSelectChannel(ch);
+                    }
+                  }}
+                  className={`w-full text-left px-2 py-1.5 rounded flex items-center space-x-1.5 transition-colors group cursor-pointer ${
                     isActive
                       ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 font-bold'
                       : unreadInfo.isUnread
@@ -329,7 +344,21 @@ export const ChannelSidebar: React.FC<Props> = ({
                       {relativeTime}
                     </span>
                   )}
-                </button>
+
+                  {channelUrl && (
+                    <a
+                      href={channelUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1 text-zinc-500 hover:text-emerald-400 hover:bg-zinc-800 rounded opacity-60 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 transition-all shrink-0 ml-0.5"
+                      title="Mattermostで開く"
+                      aria-label="Mattermostで開く"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
               );
             })
           )}

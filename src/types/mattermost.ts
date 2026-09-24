@@ -26,6 +26,7 @@ export interface MattermostChannel {
   last_post_at: number;
   total_msg_count: number;
   team_display_name?: string;
+  team_name?: string;
 }
 
 export interface MattermostFileInfo {

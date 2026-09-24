@@ -465,3 +465,33 @@ export const createPost = async (
     corsProxy
   );
 };
+
+/**
+ * チャンネルのMattermost公式WebアプリURLを生成する
+ */
+export const buildMattermostChannelUrl = (
+  serverUrl?: string,
+  channel?: MattermostChannel | null,
+  teams?: MattermostTeam[]
+): string => {
+  if (!serverUrl || !channel) return '';
+  const base = serverUrl.trim().replace(/\/+$/, '');
+
+  // チーム名の特定
+  let teamName = channel.team_name;
+  if (!teamName && channel.team_id && teams && teams.length > 0) {
+    const t = teams.find((item) => item.id === channel.team_id);
+    if (t) teamName = t.name;
+  }
+  if (!teamName && teams && teams.length > 0) {
+    teamName = teams[0].name;
+  }
+
+  const channelSlug = channel.name || channel.id;
+  if (teamName) {
+    return `${base}/${teamName}/channels/${channelSlug}`;
+  }
+
+  return `${base}/channels/${channelSlug}`;
+};
+

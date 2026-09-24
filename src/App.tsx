@@ -25,6 +25,7 @@ import {
   getPostThread,
   getUsersByIds,
   createPost,
+  buildMattermostChannelUrl,
 } from './services/mattermost';
 import { Header } from './components/Header';
 import { ChannelSidebar } from './components/ChannelSidebar';
@@ -38,6 +39,7 @@ export const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [viewMode, setViewMode] = useState<AppViewMode>('log');
+  const [teams, setTeams] = useState<MattermostTeam[]>([]);
   const [channels, setChannels] = useState<MattermostChannel[]>([]);
   const [channelMembers, setChannelMembers] = useState<Record<string, MattermostChannelMember>>({});
   const [activeChannelId, setActiveChannelId] = useState<string>(loadActiveChannelId);
@@ -112,6 +114,7 @@ export const App: React.FC = () => {
         currentSettings.token,
         currentSettings.corsProxy
       );
+      setTeams(teams);
       const teamMap = new Map<string, MattermostTeam>(teams.map((t) => [t.id, t]));
 
       // 選択中チーム（未選択なら全チーム）
@@ -146,6 +149,7 @@ export const App: React.FC = () => {
           const team = teamMap.get(teamId);
           chs.forEach((c) => {
             c.team_display_name = team ? team.display_name || team.name : undefined;
+            c.team_name = team ? team.name : undefined;
           });
           allChannels.push(...chs);
 
@@ -433,12 +437,14 @@ export const App: React.FC = () => {
   };
 
   const activeChannel = channels.find((c) => c.id === activeChannelId);
+  const activeChannelUrl = buildMattermostChannelUrl(settings.serverUrl, activeChannel, teams);
 
   return (
     <div className="flex flex-col h-screen w-screen bg-zinc-950 text-zinc-100 overflow-hidden select-none font-mono">
       {/* Header */}
       <Header
         activeChannel={activeChannel}
+        channelUrl={activeChannelUrl}
         isConnected={isConnected}
         isLoading={isLoading}
         lastUpdated={lastUpdated}
@@ -480,6 +486,8 @@ export const App: React.FC = () => {
           sortOrder={settings.channelSortOrder || 'recent'}
           onToggleSortOrder={handleToggleSortOrder}
           onOpenCatchup={() => setViewMode('catchup')}
+          serverUrl={settings.serverUrl}
+          teams={teams}
         />
 
         {viewMode === 'catchup' ? (
@@ -500,6 +508,7 @@ export const App: React.FC = () => {
             onClose={() => setViewMode('log')}
             onChannelMarkedAsRead={handleChannelMarkedAsRead}
             onRefreshUnreads={() => fetchChannels(settings)}
+            teams={teams}
           />
         ) : (
           <LogViewer

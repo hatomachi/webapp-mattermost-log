@@ -5,6 +5,7 @@ import {
   MattermostPost,
   MattermostUser,
   MattermostFileInfo,
+  MattermostTeam,
 } from '../types/mattermost';
 import {
   getChannelPosts,
@@ -14,6 +15,7 @@ import {
   getPostReactions,
   getGroupedReactions,
   formatEmojiDisplay,
+  buildMattermostChannelUrl,
 } from '../services/mattermost';
 import {
   Check,
@@ -31,6 +33,7 @@ import {
   Paperclip,
   Loader2,
   AtSign,
+  BookOpen,
 } from 'lucide-react';
 
 interface Props {
@@ -50,6 +53,7 @@ interface Props {
   onClose: () => void;
   onChannelMarkedAsRead: (channelId: string) => void;
   onRefreshUnreads: () => Promise<void>;
+  teams?: MattermostTeam[];
 }
 
 interface UnreadChannelItem {
@@ -88,6 +92,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   onClose,
   onChannelMarkedAsRead,
   onRefreshUnreads,
+  teams,
 }) => {
   const [channelStates, setChannelStates] = useState<Record<string, ChannelCatchupState>>({});
   const [isInitializing, setIsInitializing] = useState(true);
@@ -600,6 +605,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
           activeChannelList.map((state) => {
             const { channel, posts, isLoading, isMarkingRead, unreadCount, mentionCount, error } =
               state;
+            const mmUrl = buildMattermostChannelUrl(serverUrl, channel, teams);
 
             return (
               <div
@@ -617,9 +623,24 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                       </span>
                     )}
 
-                    <span className="font-bold text-xs text-zinc-100 truncate">
-                      {channel.display_name || channel.name}
-                    </span>
+                    {mmUrl ? (
+                      <a
+                        href={mmUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-bold text-xs text-zinc-100 hover:text-emerald-400 truncate flex items-center space-x-1 group/title"
+                        title={`Mattermostで開く (${mmUrl})`}
+                      >
+                        <span className="truncate group-hover/title:underline underline-offset-2">
+                          {channel.display_name || channel.name}
+                        </span>
+                        <ExternalLink className="w-2.5 h-2.5 opacity-60 group-hover/title:opacity-100 shrink-0" />
+                      </a>
+                    ) : (
+                      <span className="font-bold text-xs text-zinc-100 truncate">
+                        {channel.display_name || channel.name}
+                      </span>
+                    )}
 
                     {/* Unread badge */}
                     <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.2 rounded border border-zinc-700 shrink-0">
@@ -641,9 +662,22 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                       className="text-zinc-400 hover:text-zinc-200 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
                       title="このチャンネルをログビューで開く"
                     >
-                      <ExternalLink className="w-3 h-3" />
+                      <BookOpen className="w-3 h-3 text-sky-400" />
                       <span className="hidden sm:inline">開く</span>
                     </button>
+
+                    {mmUrl && (
+                      <a
+                        href={mmUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-zinc-400 hover:text-emerald-400 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
+                        title="Mattermostで開く"
+                      >
+                        <ExternalLink className="w-3 h-3 text-emerald-400" />
+                        <span className="hidden sm:inline">Mattermost</span>
+                      </a>
+                    )}
 
                     <button
                       onClick={() => handleMarkAsRead(channel.id)}

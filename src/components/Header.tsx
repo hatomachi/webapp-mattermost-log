@@ -1,9 +1,10 @@
 import React from 'react';
 import { AppViewMode, MattermostChannel } from '../types/mattermost';
-import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile } from 'lucide-react';
+import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile, ExternalLink } from 'lucide-react';
 
 interface Props {
   activeChannel?: MattermostChannel;
+  channelUrl?: string;
   isConnected: boolean;
   isLoading: boolean;
   lastUpdated: Date | null;
@@ -21,6 +22,7 @@ interface Props {
 
 export const Header: React.FC<Props> = ({
   activeChannel,
+  channelUrl,
   isConnected,
   isLoading,
   lastUpdated,
@@ -87,9 +89,24 @@ export const Header: React.FC<Props> = ({
                 {activeChannel.team_display_name}
               </span>
             )}
-            <span className="font-bold text-xs text-zinc-100 truncate">
-              {activeChannel.display_name || activeChannel.name}
-            </span>
+            {channelUrl ? (
+              <a
+                href={channelUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center space-x-1 font-bold text-xs text-zinc-100 hover:text-emerald-400 transition-colors truncate group/title"
+                title={`Mattermostで開く (${channelUrl})`}
+              >
+                <span className="truncate group-hover/title:underline underline-offset-2">
+                  {activeChannel.display_name || activeChannel.name}
+                </span>
+                <ExternalLink className="w-3 h-3 text-zinc-400 group-hover/title:text-emerald-400 shrink-0 opacity-70 group-hover/title:opacity-100 transition-opacity" />
+              </a>
+            ) : (
+              <span className="font-bold text-xs text-zinc-100 truncate">
+                {activeChannel.display_name || activeChannel.name}
+              </span>
+            )}
             {activeChannel.header && (
               <span className="hidden md:inline text-[10px] text-zinc-500 truncate max-w-[280px]">
                 - {activeChannel.header}
