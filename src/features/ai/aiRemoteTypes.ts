@@ -36,14 +36,51 @@ export interface ContextAttachment {
 }
 
 /**
+ * Project Info compatible with webapp-ai-remote
+ */
+export interface ProjectInfo {
+  id: string;
+  name: string;
+  path: string;
+  isGit?: boolean;
+}
+
+/**
+ * Session Info compatible with webapp-ai-remote
+ */
+export interface SessionInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  projectId?: string;
+  engine?: AIEngine;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+/**
+ * LocalStorage Keys compatible with webapp-ai-remote
+ */
+export const AI_REMOTE_STORAGE_KEYS = {
+  SESSIONS: 'ai_remote_sessions_v1',
+  PROJECTS: 'ai_remote_projects_v1',
+  MESSAGES_PREFIX: 'ai_remote_msgs_',
+  LAST_PROJECT: 'ai_remote_last_project_v1',
+} as const;
+
+/**
  * Chat message within the AI Drawer
  */
 export interface AiChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
+  content?: string; // Compatible with Agent ChatMessage
   attachments?: ContextAttachment[];
   isStreaming?: boolean;
   isError?: boolean;
-  timestamp: number;
+  timestamp: number | string;
+  sessionId?: string;
+  engine?: AIEngine;
 }

@@ -11,6 +11,9 @@ import {
   DEFAULT_AI_REMOTE_SETTINGS,
   ActiveTransport,
   ContextAttachment,
+  ProjectInfo,
+  SessionInfo,
+  AIEngine,
 } from './aiRemoteTypes';
 import { composeFullPrompt } from './mattermostAiAdapter';
 
@@ -108,14 +111,30 @@ export interface UseAiRemoteClientOptions {
   onTurnStart?: () => void;
   onTurnEnd?: () => void;
   onError?: (error: string) => void;
+  onSessionsList?: (sessions: SessionInfo[]) => void;
+  onSessionMessages?: (sessionId: string, messages: any[]) => void;
+  onProjectsList?: (projects: ProjectInfo[], baseDir: string) => void;
 }
 
 export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
-  const { settings, onDelta, onStatusMessage, onTurnStart, onTurnEnd, onError } = options;
+  const {
+    settings,
+    onDelta,
+    onStatusMessage,
+    onTurnStart,
+    onTurnEnd,
+    onError,
+    onSessionsList,
+    onSessionMessages,
+    onProjectsList,
+  } = options;
 
   const [isHubConnected, setIsHubConnected] = useState(false);
   const [isAgentConnected, setIsAgentConnected] = useState(false);
   const [agentHostname, setAgentHostname] = useState('');
+  const [agentCwd, setAgentCwd] = useState('');
+  const [availableProjects, setAvailableProjects] = useState<ProjectInfo[]>([]);
+  const [projectsBaseDir, setProjectsBaseDir] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [activeTransport, setActiveTransport] = useState<ActiveTransport>('none');
 
@@ -130,8 +149,26 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const callbacksRef = useRef({ onDelta, onStatusMessage, onTurnStart, onTurnEnd, onError });
-  callbacksRef.current = { onDelta, onStatusMessage, onTurnStart, onTurnEnd, onError };
+  const callbacksRef = useRef({
+    onDelta,
+    onStatusMessage,
+    onTurnStart,
+    onTurnEnd,
+    onError,
+    onSessionsList,
+    onSessionMessages,
+    onProjectsList,
+  });
+  callbacksRef.current = {
+    onDelta,
+    onStatusMessage,
+    onTurnStart,
+    onTurnEnd,
+    onError,
+    onSessionsList,
+    onSessionMessages,
+    onProjectsList,
+  };
 
   // POST HTTP Message (for SSE+POST fallback)
   const postHttpMessage = useCallback(async (msg: any, messageUrl: string) => {
@@ -158,10 +195,24 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
     } else if (msg.type === 'agent_hello') {
       setIsAgentConnected(true);
       if (msg.hostname) setAgentHostname(msg.hostname);
+      if (msg.defaultCwd) setAgentCwd(msg.defaultCwd);
+      sendReply({ type: 'list_projects' });
     } else if (msg.type === 'agent_status') {
       setIsAgentConnected(true);
       if (msg.hostname) setAgentHostname(msg.hostname);
+      if (msg.cwd) setAgentCwd(msg.cwd);
       setIsExecuting(Boolean(msg.isBusy));
+      sendReply({ type: 'list_projects' });
+    } else if (msg.type === 'projects_list') {
+      const projs = msg.projects || [];
+      const bDir = msg.baseDir || '';
+      setAvailableProjects(projs);
+      setProjectsBaseDir(bDir);
+      callbacksRef.current.onProjectsList?.(projs, bDir);
+    } else if (msg.type === 'sessions_list') {
+      callbacksRef.current.onSessionsList?.(msg.sessions || []);
+    } else if (msg.type === 'session_messages') {
+      callbacksRef.current.onSessionMessages?.(msg.sessionId, msg.messages || []);
     } else if (msg.type === 'turn_start') {
       setIsExecuting(true);
       callbacksRef.current.onTurnStart?.();
@@ -545,16 +596,22 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
     userPrompt: string;
     attachments?: ContextAttachment[];
     sessionId?: string;
+    isResume?: boolean;
+    cwd?: string;
+    engine?: AIEngine;
+    model?: string;
   }) => {
-    const { userPrompt, attachments, sessionId } = params;
+    const { userPrompt, attachments, sessionId, isResume, cwd, engine, model } = params;
     const fullPrompt = composeFullPrompt(userPrompt, attachments);
 
     const payload = {
       type: 'prompt',
       text: fullPrompt,
       sessionId,
-      engine: settingsRef.current.engine || 'claude',
-      model: settingsRef.current.model || undefined,
+      isResume,
+      cwd: cwd || agentCwd || undefined,
+      engine: engine || settingsRef.current.engine || 'claude',
+      model: model || settingsRef.current.model || undefined,
       permissionMode: 'acceptEdits',
     };
 
@@ -563,11 +620,31 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
       setIsExecuting(true);
     }
     return ok;
-  }, [send]);
+  }, [send, agentCwd]);
 
   // Abort current turn
   const abort = useCallback(() => {
     return send({ type: 'abort' });
+  }, [send]);
+
+  // Request available projects from PC agent
+  const requestProjects = useCallback((rootPath?: string) => {
+    return send({ type: 'list_projects', rootPath });
+  }, [send]);
+
+  // Request sessions from PC agent
+  const listSessions = useCallback((projectId?: string, cwd?: string) => {
+    return send({ type: 'list_sessions', projectId, cwd });
+  }, [send]);
+
+  // Request messages of a session from PC agent
+  const getSessionMessages = useCallback((sessionId: string, cwd?: string) => {
+    return send({ type: 'get_session_messages', sessionId, cwd });
+  }, [send]);
+
+  // Delete a session on PC agent
+  const deleteSession = useCallback((sessionId: string) => {
+    return send({ type: 'delete_session', sessionId });
   }, [send]);
 
   // Manual reconnect handler (resets backoff)
@@ -582,10 +659,17 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
     isHubConnected,
     isAgentConnected,
     agentHostname,
+    agentCwd,
+    availableProjects,
+    projectsBaseDir,
     isExecuting,
     activeTransport,
     sendPrompt,
     abort,
+    requestProjects,
+    listSessions,
+    getSessionMessages,
+    deleteSession,
     reconnect: manualReconnect,
   };
 }
