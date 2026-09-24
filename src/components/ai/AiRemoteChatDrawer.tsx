@@ -276,7 +276,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
       });
     },
     onSessionMessages: (sessionId, remoteMsgs) => {
-      if (sessionId === currentSessionId && remoteMsgs && remoteMsgs.length > 0) {
+      if (sessionId === currentSessionId && Array.isArray(remoteMsgs) && remoteMsgs.length > 0) {
         const normalized = normalizeStoredMessages(remoteMsgs, sessionId);
         setMessages(normalized);
         try {
@@ -1137,7 +1137,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                   className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                 >
                   {/* Attachment badges above user message */}
-                  {msg.attachments && msg.attachments.length > 0 && (
+                  {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
                     <div className="flex flex-wrap gap-1 mb-1">
                       {msg.attachments.map((att) => (
                         <span
