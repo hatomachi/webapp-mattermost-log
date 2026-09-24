@@ -9,3 +9,7 @@ Mattermost の複数チーム・複数チャンネルをフラットに集約し
 - **全体ダッシュボード**: [/Users/s-ikari/work/personal-vault/00_Dashboard.md](/Users/s-ikari/work/personal-vault/00_Dashboard.md)
 
 作業時は常に上記作戦ノートと同期し、完了したタスクのチェックや現在地の更新を行ってください。
+
+## 作業完了時のルール
+- タスク完了時は、動作確認およびコミット後、**必ず本リポジトリで `git push`（リモートpush）を実行すること**。
+- `personal-vault` 側の作戦ノート・Dashboard更新時も同様に `git push` まで確実に実施すること。
