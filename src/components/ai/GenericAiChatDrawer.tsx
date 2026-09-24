@@ -118,12 +118,23 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
     }
   }, [isOpen]);
 
+  // Clear conversation state when topicId changes
+  useEffect(() => {
+    if (isGenerating) {
+      abortControllerRef.current?.abort();
+      setIsGenerating(false);
+    }
+    setMessages([]);
+    setStatusText(null);
+  }, [topicId]);
+
   // Reset session handler
   const handleResetSession = async () => {
     if (isGenerating) {
       abortControllerRef.current?.abort();
       setIsGenerating(false);
     }
+    setStatusText(null);
 
     try {
       const cleanUrl = agentUrl.replace(/\/+$/, '');

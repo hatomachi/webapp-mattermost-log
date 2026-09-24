@@ -137,12 +137,22 @@ function resolveClaudeBin() {
 /**
  * Session persistence helper
  */
+function clearWorkspaceSession(workspaceDir) {
+  const sessionFilePath = path.join(workspaceDir, 'session.json');
+  try {
+    if (fs.existsSync(sessionFilePath)) {
+      fs.unlinkSync(sessionFilePath);
+    }
+  } catch {}
+}
+
 function getWorkspaceSession(workspaceDir) {
   const sessionFilePath = path.join(workspaceDir, 'session.json');
   if (fs.existsSync(sessionFilePath)) {
     try {
       const data = JSON.parse(fs.readFileSync(sessionFilePath, 'utf8'));
-      if (data && data.sessionId) {
+      // Only resume if the session was successfully established in a prior run
+      if (data && data.sessionId && data.isEstablished) {
         return data;
       }
     } catch {}
@@ -256,17 +266,12 @@ const server = http.createServer(async (req, res) => {
     const topicId = sanitizeIdentifier(parts[1]);
     const workspaceDir = path.join(BASE_WORKSPACES_DIR, appId, topicId);
 
-    const newSession = {
-      sessionId: randomUUID(),
-      createdAt: Date.now(),
-      lastUsedAt: Date.now(),
-      resetCount: 1,
-    };
-    if (fs.existsSync(workspaceDir)) {
-      saveWorkspaceSession(workspaceDir, newSession);
-    }
+    // Completely clear existing session file so next request starts fresh
+    clearWorkspaceSession(workspaceDir);
+    console.log(`[LocalAgent] [${appId}/${topicId}] Session cleared by request`);
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, session: newSession }));
+    res.end(JSON.stringify({ ok: true, message: 'Session cleared successfully' }));
     return;
   }
 
@@ -331,17 +336,12 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Manage session ID
+      if (resetSession) {
+        clearWorkspaceSession(workspaceDir);
+      }
       let existingSession = resetSession ? null : getWorkspaceSession(workspaceDir);
       let sessionId = existingSession ? existingSession.sessionId : randomUUID();
       let isResume = Boolean(existingSession);
-
-      const sessionData = {
-        sessionId,
-        createdAt: existingSession ? existingSession.createdAt : Date.now(),
-        lastUsedAt: Date.now(),
-        promptCount: (existingSession?.promptCount || 0) + 1,
-      };
-      saveWorkspaceSession(workspaceDir, sessionData);
 
       sendSSE({
         type: 'start',
@@ -447,6 +447,14 @@ const server = http.createServer(async (req, res) => {
       let fullResponseText = '';
       let errorBuffer = '';
 
+      // Helper to auto-heal when session ID is missing or expired in Claude
+      const checkAndHandleSessionNotFound = (text) => {
+        if (text && text.includes('No conversation found')) {
+          console.warn(`[LocalAgent] [${appId}/${topicId}] Session ${sessionId} not found by Claude CLI. Auto-healing by clearing session...`);
+          clearWorkspaceSession(workspaceDir);
+        }
+      };
+
       // Read stdout line by line
       const rl = createInterface({
         input: child.stdout,
@@ -456,6 +464,8 @@ const server = http.createServer(async (req, res) => {
       rl.on('line', (line) => {
         const trimmed = line.trim();
         if (!trimmed) return;
+
+        checkAndHandleSessionNotFound(trimmed);
 
         try {
           const parsed = JSON.parse(trimmed);
@@ -527,6 +537,7 @@ const server = http.createServer(async (req, res) => {
           // Handle final result event
           if (parsed.type === 'result') {
             if (parsed.is_error) {
+              checkAndHandleSessionNotFound(parsed.result);
               sendSSE({
                 type: 'error',
                 error: parsed.result || 'Claude execution failed',
@@ -554,6 +565,7 @@ const server = http.createServer(async (req, res) => {
         } catch {
           // If line is not JSON, might be raw console log or debug output
           if (trimmed.startsWith('Error:')) {
+            checkAndHandleSessionNotFound(trimmed);
             sendSSE({ type: 'error', error: trimmed });
           }
         }
@@ -562,6 +574,7 @@ const server = http.createServer(async (req, res) => {
       child.stderr.on('data', (chunk) => {
         const text = chunk.toString();
         errorBuffer += text;
+        checkAndHandleSessionNotFound(text);
         console.error(`[LocalAgent:stderr] ${text}`);
       });
 
@@ -576,10 +589,28 @@ const server = http.createServer(async (req, res) => {
       child.on('close', (code) => {
         isFinished = true;
         console.log(`[LocalAgent] [${appId}/${topicId}] Claude process exited with code ${code}`);
+
+        checkAndHandleSessionNotFound(errorBuffer);
+
+        // Only persist session if Claude succeeded or produced output
+        if ((code === 0 || fullResponseText) && !isAborted && !errorBuffer.includes('No conversation found')) {
+          saveWorkspaceSession(workspaceDir, {
+            sessionId,
+            createdAt: existingSession ? existingSession.createdAt : Date.now(),
+            lastUsedAt: Date.now(),
+            promptCount: (existingSession?.promptCount || 0) + 1,
+            isEstablished: true,
+          });
+        }
+
         if (code !== 0 && !fullResponseText && !isAborted) {
-          const errMsg = errorBuffer.trim() || `Claude CLI exited with code ${code}`;
+          let errMsg = errorBuffer.trim() || `Claude CLI exited with code ${code}`;
+          if (errMsg.includes('No conversation found')) {
+            errMsg = `${errMsg}\n(※セッションを自動リセットしました。再度メッセージを送信してください。)`;
+          }
           sendSSE({ type: 'error', error: errMsg });
         }
+
         sendSSE({
           type: 'done',
           exitCode: code,
