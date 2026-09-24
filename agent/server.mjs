@@ -19,9 +19,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, execSync, exec } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
+
+const isWindows = process.platform === 'win32';
 
 const PORT = parseInt(process.env.PORT || '3456', 10);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -54,26 +56,63 @@ function sanitizeFilename(filename) {
 }
 
 /**
- * Resolve Claude Code CLI binary path
+ * Resolve Claude Code CLI binary path (Windows & POSIX)
  */
 function resolveClaudeBin() {
   if (process.env.CLAUDE_BIN && fs.existsSync(process.env.CLAUDE_BIN)) {
     return { binPath: process.env.CLAUDE_BIN, found: true, source: 'env' };
   }
 
-  const isWindows = process.platform === 'win32';
-  const candidates = isWindows
-    ? [
-        path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'claude.cmd'),
-        path.join(os.homedir(), '.local', 'bin', 'claude.exe'),
-      ]
-    : [
-        path.join(os.homedir(), '.local', 'bin', 'claude'),
-        '/opt/homebrew/bin/claude',
-        '/usr/local/bin/claude',
-        '/usr/bin/claude',
-        path.join(os.homedir(), '.npm-global', 'bin', 'claude'),
-      ];
+  if (isWindows) {
+    // 1. Try 'where claude' on Windows PATH
+    try {
+      const output = execSync('where claude', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      }).trim();
+      const firstMatch = output.split(/\r?\n/)[0];
+      if (firstMatch && fs.existsSync(firstMatch)) {
+        return { binPath: firstMatch, found: true, source: `where claude (${firstMatch})` };
+      }
+    } catch {}
+
+    // 2. Common Windows paths
+    const winCandidates = [
+      process.env.APPDATA ? path.join(process.env.APPDATA, 'npm', 'claude.cmd') : null,
+      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'claude', 'claude.exe') : null,
+      path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+      path.join(os.homedir(), '.local', 'bin', 'claude.exe'),
+      path.join(os.homedir(), '.local', 'bin', 'claude.cmd'),
+    ].filter(Boolean);
+
+    for (const candidate of winCandidates) {
+      if (fs.existsSync(candidate)) {
+        return { binPath: candidate, found: true, source: candidate };
+      }
+    }
+
+    return { binPath: 'claude.cmd', found: false, source: 'Windows PATH fallback (claude.cmd)' };
+  }
+
+  // Linux / macOS candidate paths
+  try {
+    const whichOut = execSync('which claude', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (whichOut && fs.existsSync(whichOut)) {
+      return { binPath: whichOut, found: true, source: `which (${whichOut})` };
+    }
+  } catch {}
+
+  const posixCandidates = [
+    path.join(os.homedir(), '.local', 'bin', 'claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+    path.join(os.homedir(), '.npm-global', 'bin', 'claude'),
+  ];
 
   // Also check nvm paths
   try {
@@ -81,18 +120,18 @@ function resolveClaudeBin() {
     if (fs.existsSync(nvmDir)) {
       const versions = fs.readdirSync(nvmDir);
       for (const v of versions.reverse()) {
-        candidates.push(path.join(nvmDir, v, 'bin', 'claude'));
+        posixCandidates.push(path.join(nvmDir, v, 'bin', 'claude'));
       }
     }
   } catch {}
 
-  for (const candidate of candidates) {
+  for (const candidate of posixCandidates) {
     if (fs.existsSync(candidate)) {
       return { binPath: candidate, found: true, source: candidate };
     }
   }
 
-  return { binPath: 'claude', found: false, source: 'PATH fallback' };
+  return { binPath: 'claude', found: false, source: 'PATH fallback (claude)' };
 }
 
 /**
@@ -179,6 +218,8 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         agent: 'local-ai-agent',
         version: '0.1.0',
+        platform: process.platform,
+        isWindows,
         workspacesDir: BASE_WORKSPACES_DIR,
         claude: claudeInfo,
         uptime: process.uptime(),
@@ -345,12 +386,16 @@ const server = http.createServer(async (req, res) => {
         console.log(`[LocalAgent] [${appId}/${topicId}] Client disconnected, aborting Claude process...`);
         isAborted = true;
         try {
-          child.kill('SIGTERM');
-          setTimeout(() => {
-            if (child.exitCode === null) {
-              child.kill('SIGKILL');
-            }
-          }, 3000);
+          if (isWindows && child.pid) {
+            exec(`taskkill /pid ${child.pid} /T /F`, () => {});
+          } else {
+            child.kill('SIGTERM');
+            setTimeout(() => {
+              if (child.exitCode === null) {
+                child.kill('SIGKILL');
+              }
+            }, 3000);
+          }
         } catch {}
       });
 
@@ -361,8 +406,13 @@ const server = http.createServer(async (req, res) => {
             ...process.env,
             // Ensure no interactive prompts hang
             CI: '1',
+            FORCE_COLOR: '0',
+            PYTHONIOENCODING: 'utf-8',
+            LANG: 'ja_JP.UTF-8',
           },
           stdio: ['ignore', 'pipe', 'pipe'],
+          shell: isWindows,
+          windowsHide: true,
         });
       } catch (err) {
         sendSSE({

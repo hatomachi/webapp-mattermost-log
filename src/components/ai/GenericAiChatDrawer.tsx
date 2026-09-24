@@ -61,6 +61,8 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
   const [agentStatus, setAgentStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [agentDetails, setAgentDetails] = useState<{
     version?: string;
+    platform?: string;
+    isWindows?: boolean;
     claudeFound?: boolean;
     claudeSource?: string;
   }>({});
@@ -80,6 +82,8 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
         setAgentStatus('connected');
         setAgentDetails({
           version: data.version,
+          platform: data.platform,
+          isWindows: data.isWindows,
           claudeFound: data.claude?.found,
           claudeSource: data.claude?.source,
         });
@@ -335,7 +339,7 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
               {agentStatus === 'connected' ? (
                 <span className="inline-flex items-center space-x-0.5 text-[9px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-1 py-0.2 rounded font-sans">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-0.5" />
-                  Claude Code
+                  Claude Code{agentDetails.isWindows ? ' (Win)' : ''}
                 </span>
               ) : agentStatus === 'checking' ? (
                 <span className="text-[9px] text-zinc-400 bg-zinc-800 px-1 rounded">確認中...</span>
@@ -379,27 +383,43 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
 
       {/* Connection warning banner if disconnected */}
       {agentStatus === 'disconnected' && (
-        <div className="bg-rose-950/80 border-b border-rose-800/80 px-3 py-2 text-rose-300 text-xs flex flex-col space-y-1 shrink-0">
+        <div className="bg-rose-950/80 border-b border-rose-800/80 px-3 py-2 text-rose-300 text-xs flex flex-col space-y-1.5 shrink-0">
           <div className="flex items-center space-x-1.5 font-bold">
             <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
             <span>ローカルAIエージェントが起動していません</span>
           </div>
           <p className="text-[11px] text-rose-200/90 leading-tight">
-            ターミナルで以下のコマンドを実行してエージェントを常駐させてください：
+            Windows の場合は <code className="text-emerald-300 bg-zinc-950 px-1 py-0.5 rounded border border-zinc-800 font-mono">start-agent.bat</code> をダブルクリック、または以下のコマンドで起動してください：
           </p>
-          <div className="bg-zinc-950/90 border border-zinc-800 rounded p-1.5 flex items-center justify-between font-mono text-[10px] text-emerald-400">
-            <code>npm run agent</code>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText('npm run agent');
-                setCopiedId('npm-cmd');
-                setTimeout(() => setCopiedId(null), 2000);
-              }}
-              className="text-zinc-400 hover:text-zinc-100 p-0.5 ml-2"
-              title="コマンドをコピー"
-            >
-              {copiedId === 'npm-cmd' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-            </button>
+          <div className="flex flex-col space-y-1">
+            <div className="bg-zinc-950/90 border border-zinc-800 rounded p-1.5 flex items-center justify-between font-mono text-[10px] text-emerald-400">
+              <code>start-agent.bat</code>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText('start-agent.bat');
+                  setCopiedId('bat-cmd');
+                  setTimeout(() => setCopiedId(null), 2000);
+                }}
+                className="text-zinc-400 hover:text-zinc-100 p-0.5 ml-2"
+                title="コマンドをコピー"
+              >
+                {copiedId === 'bat-cmd' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              </button>
+            </div>
+            <div className="bg-zinc-950/90 border border-zinc-800 rounded p-1.5 flex items-center justify-between font-mono text-[10px] text-emerald-400">
+              <code>npm run agent</code>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText('npm run agent');
+                  setCopiedId('npm-cmd');
+                  setTimeout(() => setCopiedId(null), 2000);
+                }}
+                className="text-zinc-400 hover:text-zinc-100 p-0.5 ml-2"
+                title="コマンドをコピー"
+              >
+                {copiedId === 'npm-cmd' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              </button>
+            </div>
           </div>
         </div>
       )}

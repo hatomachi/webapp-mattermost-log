@@ -518,7 +518,7 @@ export const SettingsModal: React.FC<Props> = ({
                 </button>
               </div>
               <p className="text-[10px] text-zinc-500 mt-1">
-                ローカルで <code>npm run agent</code> を実行して常駐させることで、Claude Code CLI と壁打ちできます
+                Windows は <code>start-agent.bat</code>、Mac/Linux は <code>npm run agent</code> でエージェントを常駐させると、Claude Code CLI と壁打ちできます
               </p>
             </div>
 
