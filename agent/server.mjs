@@ -380,11 +380,14 @@ const server = http.createServer(async (req, res) => {
 
       let child;
       let isAborted = false;
+      let isFinished = false;
 
-      // Handle client disconnect -> abort child process
-      req.on('close', () => {
+      // Handle client disconnect -> abort child process ONLY if response closed prematurely
+      res.on('close', () => {
+        if (isFinished || res.writableEnded) return;
         if (!child || child.killed || child.exitCode !== null) return;
-        console.log(`[LocalAgent] [${appId}/${topicId}] Client disconnected, aborting Claude process...`);
+
+        console.log(`[LocalAgent] [${appId}/${topicId}] Client disconnected prematurely, aborting Claude process...`);
         isAborted = true;
         try {
           if (isWindows && child.pid) {
@@ -550,6 +553,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       child.on('error', (err) => {
+        isFinished = true;
         console.error(`[LocalAgent] Process error: ${err.message}`);
         sendSSE({ type: 'error', error: `Process error: ${err.message}` });
         sendSSE({ type: 'done', isError: true });
@@ -557,6 +561,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       child.on('close', (code) => {
+        isFinished = true;
         console.log(`[LocalAgent] [${appId}/${topicId}] Claude process exited with code ${code}`);
         if (code !== 0 && !fullResponseText && !isAborted) {
           const errMsg = errorBuffer.trim() || `Claude CLI exited with code ${code}`;
