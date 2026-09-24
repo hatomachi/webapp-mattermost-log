@@ -63,6 +63,37 @@ function generateUUID(): string {
   });
 }
 
+/**
+ * Normalize raw messages stored in localStorage or received from remote
+ * to guarantee valid AiChatMessage format (safeguards against missing .text property)
+ */
+function normalizeStoredMessages(rawList: any, sessionId: string): AiChatMessage[] {
+  if (!Array.isArray(rawList)) return [];
+  return rawList
+    .filter((m) => m && typeof m === 'object')
+    .map((m: any, idx: number): AiChatMessage => {
+      const rawText = typeof m.text === 'string'
+        ? m.text
+        : (typeof m.content === 'string' ? m.content : '');
+      const ts = typeof m.timestamp === 'string'
+        ? new Date(m.timestamp).getTime()
+        : (typeof m.timestamp === 'number' ? m.timestamp : Date.now());
+
+      return {
+        id: m.id || `msg-${sessionId}-${idx}`,
+        role: m.role === 'assistant' ? 'assistant' : (m.role === 'system' ? 'system' : 'user'),
+        text: rawText,
+        content: rawText,
+        attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
+        isStreaming: Boolean(m.isStreaming),
+        isError: Boolean(m.isError),
+        timestamp: isNaN(ts) ? Date.now() : ts,
+        sessionId: m.sessionId || sessionId,
+        engine: m.engine,
+      };
+    });
+}
+
 export const AiRemoteChatDrawer: React.FC<Props> = ({
   isOpen,
   onClose,
@@ -77,7 +108,10 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
   const [projects, setProjects] = useState<ProjectInfo[]>(() => {
     try {
       const saved = localStorage.getItem(AI_REMOTE_STORAGE_KEYS.PROJECTS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed.filter((p) => p && typeof p.path === 'string');
+      }
     } catch (e) {
       console.error(e);
     }
@@ -89,9 +123,9 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
       const saved = localStorage.getItem(AI_REMOTE_STORAGE_KEYS.PROJECTS);
       const lastId = localStorage.getItem(AI_REMOTE_STORAGE_KEYS.LAST_PROJECT);
       if (saved) {
-        const list: ProjectInfo[] = JSON.parse(saved);
-        if (list.length > 0) {
-          const found = list.find((p) => p.id === lastId || p.path === lastId);
+        const list = JSON.parse(saved);
+        if (Array.isArray(list) && list.length > 0) {
+          const found = list.find((p) => p && (p.id === lastId || p.path === lastId));
           return found || list[0];
         }
       }
@@ -105,7 +139,12 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
   const [sessions, setSessions] = useState<SessionInfo[]>(() => {
     try {
       const saved = localStorage.getItem(AI_REMOTE_STORAGE_KEYS.SESSIONS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((s) => s && typeof s.id === 'string');
+        }
+      }
     } catch (e) {
       console.error(e);
     }
@@ -115,7 +154,9 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
     try {
       const savedLast = localStorage.getItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION);
-      if (savedLast) return savedLast;
+      if (savedLast && typeof savedLast === 'string' && savedLast.trim().length > 0) {
+        return savedLast.trim();
+      }
     } catch (e) {
       console.error(e);
     }
@@ -236,14 +277,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
     },
     onSessionMessages: (sessionId, remoteMsgs) => {
       if (sessionId === currentSessionId && remoteMsgs && remoteMsgs.length > 0) {
-        const normalized: AiChatMessage[] = remoteMsgs.map((m: any, idx: number) => ({
-          id: m.id || `remote-${sessionId}-${idx}`,
-          role: m.role || 'user',
-          text: m.content || m.text || '',
-          timestamp: typeof m.timestamp === 'string' ? new Date(m.timestamp).getTime() : (m.timestamp || Date.now()),
-          sessionId: m.sessionId || sessionId,
-          engine: m.engine,
-        }));
+        const normalized = normalizeStoredMessages(remoteMsgs, sessionId);
         setMessages(normalized);
         try {
           localStorage.setItem(
@@ -262,13 +296,17 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
     try {
       const saved = localStorage.getItem(`${AI_REMOTE_STORAGE_KEYS.MESSAGES_PREFIX}${currentSessionId}`);
       if (saved) {
-        setMessages(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        setMessages(normalizeStoredMessages(parsed, currentSessionId));
       } else {
         setMessages([]);
       }
     } catch (e) {
       console.error('Failed to load session messages from storage', e);
       setMessages([]);
+      try {
+        localStorage.removeItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION);
+      } catch {}
     }
   }, [currentSessionId]);
 
@@ -294,8 +332,9 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
       setSessions((prev) => {
         const existingIdx = prev.findIndex((s) => s.id === currentSessionId);
         const firstUserMsg = messages.find((m) => m.role === 'user');
-        const autoTitle = firstUserMsg
-          ? (firstUserMsg.text.length > 32 ? firstUserMsg.text.substring(0, 32) + '...' : firstUserMsg.text)
+        const userText = firstUserMsg ? (firstUserMsg.text || firstUserMsg.content || '') : '';
+        const autoTitle = userText
+          ? (userText.length > 32 ? userText.substring(0, 32) + '...' : userText)
           : (topicTitle || '無題のセッション');
 
         const nowIso = new Date().toISOString();
@@ -393,7 +432,12 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
       try {
         localStorage.setItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION, existing.id);
         const cached = localStorage.getItem(`${AI_REMOTE_STORAGE_KEYS.MESSAGES_PREFIX}${existing.id}`);
-        setMessages(cached ? JSON.parse(cached) : []);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setMessages(normalizeStoredMessages(parsed, existing.id));
+        } else {
+          setMessages([]);
+        }
       } catch (e) {
         setMessages([]);
       }
@@ -483,7 +527,8 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
       localStorage.setItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION, session.id);
       const cached = localStorage.getItem(`${AI_REMOTE_STORAGE_KEYS.MESSAGES_PREFIX}${session.id}`);
       if (cached) {
-        setMessages(JSON.parse(cached));
+        const parsed = JSON.parse(cached);
+        setMessages(normalizeStoredMessages(parsed, session.id));
       } else {
         setMessages([]);
       }
@@ -1126,7 +1171,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                         <div className="flex items-center space-x-1.5">
                           <button
                             type="button"
-                            onClick={() => handleCopyText(msg.id, msg.text)}
+                            onClick={() => handleCopyText(msg.id, msg.text || msg.content || '')}
                             className="hover:text-zinc-200 flex items-center space-x-0.5"
                             title="テキストをコピー"
                           >
@@ -1146,7 +1191,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                           {onApplyDraftToInput && (
                             <button
                               type="button"
-                              onClick={() => handleApplyDraft(msg.id, msg.text)}
+                              onClick={() => handleApplyDraft(msg.id, msg.text || msg.content || '')}
                               className="hover:text-emerald-300 flex items-center space-x-0.5 text-zinc-300"
                               title="Mattermost返信欄に入力"
                             >
@@ -1169,7 +1214,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
 
                     {/* Message body */}
                     <div className="whitespace-pre-wrap break-words">
-                      {msg.text || (msg.isStreaming ? '...' : '')}
+                      {msg.text || msg.content || (msg.isStreaming ? '...' : '')}
                     </div>
                   </div>
                 </div>

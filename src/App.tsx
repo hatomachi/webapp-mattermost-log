@@ -34,6 +34,7 @@ import { LogViewer } from './components/LogViewer';
 import { UnreadCatchupViewer } from './components/UnreadCatchupViewer';
 import { SettingsModal } from './components/SettingsModal';
 import { AiRemoteChatDrawer } from './components/ai/AiRemoteChatDrawer';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import {
   formatChannelLogsToAttachment,
   formatThreadLogsToAttachment,
@@ -745,19 +746,21 @@ export const App: React.FC = () => {
       </div>
 
       {/* AI Wall-bounce Chat Drawer (Remote Hub + Agent) */}
-      <AiRemoteChatDrawer
-        isOpen={isAiDrawerOpen}
-        onClose={() => setIsAiDrawerOpen(false)}
-        settings={settings}
-        topicTitle={aiTopicTitle}
-        initialAttachment={activeAiAttachment}
-        getCurrentContextAttachment={getCurrentContextAttachment}
-        onApplyDraftToInput={handleApplyDraftToInput}
-        onOpenSettings={() => {
-          setIsAiDrawerOpen(false);
-          setIsSettingsOpen(true);
-        }}
-      />
+      <ErrorBoundary fallbackTitle="AIリモート画面でエラーが発生しました">
+        <AiRemoteChatDrawer
+          isOpen={isAiDrawerOpen}
+          onClose={() => setIsAiDrawerOpen(false)}
+          settings={settings}
+          topicTitle={aiTopicTitle}
+          initialAttachment={activeAiAttachment}
+          getCurrentContextAttachment={getCurrentContextAttachment}
+          onApplyDraftToInput={handleApplyDraftToInput}
+          onOpenSettings={() => {
+            setIsAiDrawerOpen(false);
+            setIsSettingsOpen(true);
+          }}
+        />
+      </ErrorBoundary>
 
       {/* Settings Modal */}
       <SettingsModal
