@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "agent": "node agent/server.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

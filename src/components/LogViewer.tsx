@@ -21,6 +21,7 @@ import {
   Smile,
   Send,
   Reply,
+  Bot,
 } from 'lucide-react';
 
 interface Props {
@@ -41,6 +42,10 @@ interface Props {
   loadingThreads?: Record<string, boolean>;
   onFetchThread?: (postId: string) => Promise<void>;
   onSendPost?: (message: string, rootId?: string) => Promise<boolean>;
+  onOpenAiWithThread?: (rootPost: MattermostPost) => void;
+  onOpenAiWithChannel?: () => void;
+  appliedDraft?: string | null;
+  onClearAppliedDraft?: () => void;
 }
 
 export const LogViewer: React.FC<Props> = ({
@@ -61,6 +66,10 @@ export const LogViewer: React.FC<Props> = ({
   loadingThreads = {},
   onFetchThread,
   onSendPost,
+  onOpenAiWithThread,
+  onOpenAiWithChannel,
+  appliedDraft,
+  onClearAppliedDraft,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -75,6 +84,17 @@ export const LogViewer: React.FC<Props> = ({
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // Handle draft text injected from AI chat drawer
+  useEffect(() => {
+    if (appliedDraft) {
+      setInputText(appliedDraft);
+      onClearAppliedDraft?.();
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 50);
+    }
+  }, [appliedDraft, onClearAppliedDraft]);
 
   const fontClass = {
     xs: 'text-xs leading-[1.35]',
@@ -529,11 +549,24 @@ export const LogViewer: React.FC<Props> = ({
           )}
         </div>
 
-        {searchQuery && (
-          <span className="text-[10px] text-zinc-400 ml-2 shrink-0">
-            一致: {displayedPosts.length} 件
-          </span>
-        )}
+        <div className="flex items-center space-x-1.5 shrink-0 ml-2">
+          {searchQuery && (
+            <span className="text-[10px] text-zinc-400">
+              一致: {displayedPosts.length} 件
+            </span>
+          )}
+
+          {onOpenAiWithChannel && (
+            <button
+              onClick={onOpenAiWithChannel}
+              className="flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/80 text-emerald-300 font-sans transition-colors"
+              title="このチャンネルのログをもとにAI壁打ちを開く"
+            >
+              <Bot className="w-3 h-3 text-emerald-400" />
+              <span className="hidden md:inline">AI相談</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main Log Scroll Area */}
@@ -669,6 +702,21 @@ export const LogViewer: React.FC<Props> = ({
                               </button>
                             )}
 
+                            {onOpenAiWithThread && !isSystemMessage && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenAiWithThread(post);
+                                }}
+                                className="inline-flex items-center space-x-0.5 ml-1 text-[10px] px-1 py-0.2 rounded text-zinc-500 hover:text-emerald-300 hover:bg-emerald-950/40 select-none align-baseline cursor-pointer transition-opacity opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                                title="この投稿・スレッドについてAIに相談"
+                              >
+                                <Bot className="w-2.5 h-2.5 text-emerald-400" />
+                                <span className="text-[9px] text-emerald-300">AI</span>
+                              </button>
+                            )}
+
                             {renderAttachments(post)}
                           </>
                         )}
@@ -743,6 +791,20 @@ export const LogViewer: React.FC<Props> = ({
                                   >
                                     <Reply className="w-2.5 h-2.5" />
                                     <span className="text-[9px]">返信</span>
+                                  </button>
+                                )}
+                                {onOpenAiWithThread && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onOpenAiWithThread(post);
+                                    }}
+                                    className="inline-flex items-center space-x-0.5 ml-1 text-[10px] px-1 py-0.2 rounded text-zinc-500 hover:text-emerald-300 hover:bg-emerald-950/40 select-none align-baseline cursor-pointer transition-opacity opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                                    title="このスレッドについてAIに相談"
+                                  >
+                                    <Bot className="w-2.5 h-2.5 text-emerald-400" />
+                                    <span className="text-[9px] text-emerald-300">AI</span>
                                   </button>
                                 )}
                                 {renderAttachments(reply)}

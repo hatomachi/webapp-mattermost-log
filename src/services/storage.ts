@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 'xs',
   channelSortOrder: 'recent',
   collapseNewlines: false,
+  aiAgentUrl: 'http://localhost:3456',
 };
 
 

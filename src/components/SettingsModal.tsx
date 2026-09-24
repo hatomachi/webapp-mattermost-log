@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings, MattermostTeam } from '../types/mattermost';
 import { getMe, getMyTeams } from '../services/mattermost';
-import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink } from 'lucide-react';
+import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink, Bot } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -23,6 +23,40 @@ export const SettingsModal: React.FC<Props> = ({
     success: boolean;
     message: string;
   } | null>(null);
+
+  const [isAiTesting, setIsAiTesting] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+
+  const handleTestAiConnection = async () => {
+    const url = (formData.aiAgentUrl || 'http://localhost:3456').replace(/\/+$/, '');
+    setIsAiTesting(true);
+    setAiTestResult(null);
+
+    try {
+      const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      const data = await res.json();
+      const claudeMsg = data.claude?.found
+        ? `Claude CLI 検出済 (${data.claude.source})`
+        : 'Claude CLI が見つかりません (PATHまたはCLAUDE_BIN環境変数をご確認ください)';
+      setAiTestResult({
+        success: true,
+        message: `接続成功: ${data.agent} v${data.version || '0.1.0'} / ${claudeMsg}`,
+      });
+    } catch (err: any) {
+      setAiTestResult({
+        success: false,
+        message: `接続失敗: ${err.message || 'エージェントサーバーに接続できません (npm run agent で起動してください)'}`,
+      });
+    } finally {
+      setIsAiTesting(false);
+    }
+  };
 
   useEffect(() => {
     setFormData(settings);
@@ -450,6 +484,60 @@ export const SettingsModal: React.FC<Props> = ({
                 <option value={60}>60秒</option>
               </select>
             </div>
+          </div>
+
+          {/* Local AI Agent Settings */}
+          <div className="border-t border-zinc-800 pt-3 space-y-2.5">
+            <div className="flex items-center space-x-1.5 text-zinc-300 font-semibold">
+              <Bot className="w-3.5 h-3.5 text-emerald-400" />
+              <span>汎用ローカルAIエージェント設定</span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-400 mb-1">
+                エージェントサーバーURL
+              </label>
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  placeholder="http://localhost:3456"
+                  value={formData.aiAgentUrl || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, aiAgentUrl: e.target.value })
+                  }
+                  className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-500 text-xs font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleTestAiConnection}
+                  disabled={isAiTesting}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded border border-zinc-600 transition-colors text-xs shrink-0 flex items-center space-x-1"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isAiTesting ? 'animate-spin' : ''}`} />
+                  <span>テスト</span>
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500 mt-1">
+                ローカルで <code>npm run agent</code> を実行して常駐させることで、Claude Code CLI と壁打ちできます
+              </p>
+            </div>
+
+            {aiTestResult && (
+              <div
+                className={`p-2 rounded text-[11px] flex items-start space-x-1.5 ${
+                  aiTestResult.success
+                    ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-300'
+                    : 'bg-rose-950/60 border border-rose-800 text-rose-300'
+                }`}
+              >
+                {aiTestResult.success ? (
+                  <Check className="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-rose-400" />
+                )}
+                <span className="break-all">{aiTestResult.message}</span>
+              </div>
+            )}
           </div>
 
           {/* Footer Save */}

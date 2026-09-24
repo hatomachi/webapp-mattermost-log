@@ -124,6 +124,7 @@ export interface AppSettings {
   fontSize: 'xs' | 'sm' | 'base';
   channelSortOrder: ChannelSortOrder;
   collapseNewlines: boolean;
+  aiAgentUrl?: string;
 }
 
 export interface ReplyTarget {

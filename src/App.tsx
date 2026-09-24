@@ -32,6 +32,12 @@ import { ChannelSidebar } from './components/ChannelSidebar';
 import { LogViewer } from './components/LogViewer';
 import { UnreadCatchupViewer } from './components/UnreadCatchupViewer';
 import { SettingsModal } from './components/SettingsModal';
+import { GenericAiChatDrawer } from './components/ai/GenericAiChatDrawer';
+import {
+  formatChannelLogsToMarkdown,
+  formatThreadLogsToMarkdown,
+  ContextFile,
+} from './features/ai/mattermostAiAdapter';
 
 export const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
@@ -54,6 +60,14 @@ export const App: React.FC = () => {
 
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // AI壁打ち用ステート
+  const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
+  const [aiContextTarget, setAiContextTarget] = useState<{
+    type: 'channel' | 'thread';
+    rootPost?: MattermostPost;
+  }>({ type: 'channel' });
+  const [appliedAiDraft, setAppliedAiDraft] = useState<string | null>(null);
 
   const isConnected = Boolean(settings.serverUrl && settings.token);
 
@@ -436,6 +450,70 @@ export const App: React.FC = () => {
     saveSettings(updated);
   };
 
+  // AIトピックID（ワークスペース分離キー: チャンネルID または スレッドID）
+  const aiTopicId = useMemo(() => {
+    if (aiContextTarget.type === 'thread' && aiContextTarget.rootPost) {
+      return `thread_${aiContextTarget.rootPost.id}`;
+    }
+    return activeChannelId ? `channel_${activeChannelId}` : 'general';
+  }, [aiContextTarget, activeChannelId]);
+
+  // AIトピック表示名
+  const aiTopicTitle = useMemo(() => {
+    const ch = channels.find((c) => c.id === activeChannelId);
+    const chName = ch ? `#${ch.display_name || ch.name}` : '未選択';
+    if (aiContextTarget.type === 'thread' && aiContextTarget.rootPost) {
+      const user = userCache[aiContextTarget.rootPost.user_id];
+      const author = user ? user.nickname || user.username : 'ユーザー';
+      return `${chName} > スレッド: @${author}`;
+    }
+    return chName;
+  }, [aiContextTarget, channels, activeChannelId, userCache]);
+
+  // 整形済みコンテキストファイル（Markdown）
+  const aiContextFile = useMemo<ContextFile | null>(() => {
+    const ch = channels.find((c) => c.id === activeChannelId);
+    if (aiContextTarget.type === 'thread' && aiContextTarget.rootPost) {
+      const root = aiContextTarget.rootPost;
+      const replies = threadPosts[root.id] || [];
+      return formatThreadLogsToMarkdown({
+        channel: ch,
+        rootPost: root,
+        replies,
+        userCache,
+      });
+    }
+
+    if (posts.length > 0) {
+      return formatChannelLogsToMarkdown({
+        channel: ch,
+        posts,
+        userCache,
+        threadPosts,
+        maxPosts: 80,
+      });
+    }
+
+    return null;
+  }, [aiContextTarget, channels, activeChannelId, posts, userCache, threadPosts]);
+
+  const handleOpenAiForChannel = () => {
+    setAiContextTarget({ type: 'channel' });
+    setIsAiDrawerOpen(true);
+  };
+
+  const handleOpenAiForThread = (rootPost: MattermostPost) => {
+    if (!threadPosts[rootPost.id] && !loadingThreads[rootPost.id]) {
+      handleFetchThread(rootPost.id);
+    }
+    setAiContextTarget({ type: 'thread', rootPost });
+    setIsAiDrawerOpen(true);
+  };
+
+  const handleApplyDraftToInput = (text: string) => {
+    setAppliedAiDraft(text);
+  };
+
   const activeChannel = channels.find((c) => c.id === activeChannelId);
   const activeChannelUrl = buildMattermostChannelUrl(
     settings.serverUrl,
@@ -463,6 +541,8 @@ export const App: React.FC = () => {
         viewMode={viewMode}
         unreadChannelCount={unreadChannelCount}
         onToggleViewMode={() => setViewMode((prev) => (prev === 'catchup' ? 'log' : 'catchup'))}
+        isAiDrawerOpen={isAiDrawerOpen}
+        onToggleAiDrawer={() => setIsAiDrawerOpen((prev) => !prev)}
       />
 
       {/* Error alert banner */}
@@ -536,9 +616,25 @@ export const App: React.FC = () => {
             loadingThreads={loadingThreads}
             onFetchThread={handleFetchThread}
             onSendPost={handleSendPost}
+            onOpenAiWithThread={handleOpenAiForThread}
+            onOpenAiWithChannel={handleOpenAiForChannel}
+            appliedDraft={appliedAiDraft}
+            onClearAppliedDraft={() => setAppliedAiDraft(null)}
           />
         )}
       </div>
+
+      {/* AI Wall-bounce Chat Drawer */}
+      <GenericAiChatDrawer
+        isOpen={isAiDrawerOpen}
+        onClose={() => setIsAiDrawerOpen(false)}
+        agentUrl={settings.aiAgentUrl || 'http://localhost:3456'}
+        appId="webapp-mattermost-log"
+        topicId={aiTopicId}
+        topicTitle={aiTopicTitle}
+        contextFile={aiContextFile}
+        onApplyDraftToInput={handleApplyDraftToInput}
+      />
 
       {/* Settings Modal */}
       <SettingsModal

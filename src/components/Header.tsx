@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppViewMode, MattermostChannel } from '../types/mattermost';
-import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile, ExternalLink } from 'lucide-react';
+import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile, ExternalLink, Bot } from 'lucide-react';
 
 interface Props {
   activeChannel?: MattermostChannel;
@@ -18,6 +18,8 @@ interface Props {
   viewMode: AppViewMode;
   unreadChannelCount: number;
   onToggleViewMode: () => void;
+  isAiDrawerOpen?: boolean;
+  onToggleAiDrawer?: () => void;
 }
 
 export const Header: React.FC<Props> = ({
@@ -36,6 +38,8 @@ export const Header: React.FC<Props> = ({
   viewMode,
   unreadChannelCount,
   onToggleViewMode,
+  isAiDrawerOpen = false,
+  onToggleAiDrawer,
 }) => {
   const getChannelIcon = (type?: string) => {
     switch (type) {
@@ -213,6 +217,22 @@ export const Header: React.FC<Props> = ({
             className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded disabled:opacity-40 transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-400' : ''}`} />
+          </button>
+        )}
+
+        {onToggleAiDrawer && (
+          <button
+            onClick={onToggleAiDrawer}
+            aria-label="Toggle AI Chat Drawer"
+            title={isAiDrawerOpen ? 'AI壁打ちを閉じる' : 'AI壁打ち（Claude Code）を開く'}
+            className={`p-1.5 rounded transition-colors flex items-center space-x-1 ${
+              isAiDrawerOpen
+                ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-600/70 hover:bg-emerald-900/90'
+                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline text-[11px] font-sans">AI壁打ち</span>
           </button>
         )}
 
