@@ -67,6 +67,7 @@ export const AI_REMOTE_STORAGE_KEYS = {
   PROJECTS: 'ai_remote_projects_v1',
   MESSAGES_PREFIX: 'ai_remote_msgs_',
   LAST_PROJECT: 'ai_remote_last_project_v1',
+  LAST_SESSION: 'ai_remote_last_session_v1',
 } as const;
 
 /**

@@ -112,7 +112,15 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
     return [];
   });
 
-  const [currentSessionId, setCurrentSessionId] = useState<string>(generateUUID);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    try {
+      const savedLast = localStorage.getItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION);
+      if (savedLast) return savedLast;
+    } catch (e) {
+      console.error(e);
+    }
+    return generateUUID();
+  });
 
   // --- 3. UI and View states ---
   const [isSessionListView, setIsSessionListView] = useState(false);
@@ -267,6 +275,15 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
   // Auto-save messages to localStorage whenever messages change
   useEffect(() => {
     if (!currentSessionId || messages.length === 0) return;
+
+    // ガード: messages 内のメッセージが現在の currentSessionId と不一致なら保存をスキップ（他セッションの誤上書き防止）
+    const hasMismatchedSession = messages.some(
+      (m) => m.sessionId && m.sessionId !== currentSessionId
+    );
+    if (hasMismatchedSession) {
+      return;
+    }
+
     try {
       localStorage.setItem(
         `${AI_REMOTE_STORAGE_KEYS.MESSAGES_PREFIX}${currentSessionId}`,
@@ -319,13 +336,12 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
     }
   }, [messages, currentSessionId, currentProject, agentCwd, settings.aiEngine, topicTitle]);
 
-  // Sync sessions list and scan projects when agent connects or currentProject changes
+  // Sync sessions list when agent connects or currentProject changes (avoid redundant project scans)
   useEffect(() => {
     if (isAgentConnected) {
       listSessions(currentProject?.id, currentProject?.path || agentCwd);
-      requestProjects();
     }
-  }, [isAgentConnected, currentProject, agentCwd, listSessions, requestProjects]);
+  }, [isAgentConnected, currentProject, agentCwd, listSessions]);
 
   // Set initial attachment when drawer opens
   useEffect(() => {
@@ -374,16 +390,30 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
     const existing = sessions.find((s) => s.projectId === project.id || s.cwd === project.path);
     if (existing) {
       setCurrentSessionId(existing.id);
+      try {
+        localStorage.setItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION, existing.id);
+        const cached = localStorage.getItem(`${AI_REMOTE_STORAGE_KEYS.MESSAGES_PREFIX}${existing.id}`);
+        setMessages(cached ? JSON.parse(cached) : []);
+      } catch (e) {
+        setMessages([]);
+      }
       if (isAgentConnected) {
         getSessionMessages(existing.id, project.path);
       }
     } else {
-      handleNewSession(project.path);
+      // 既存セッションがない場合、新規UUIDを準備（セッション履歴一覧画面は維持する）
+      const newId = generateUUID();
+      setCurrentSessionId(newId);
+      try {
+        localStorage.setItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION, newId);
+      } catch (e) {}
+      setMessages([]);
     }
 
     if (isAgentConnected) {
       listSessions(project.id, project.path);
     }
+    // 注意: setIsSessionListView(false) は呼ばない！一覧画面のまま維持する
   };
 
   const handleAddProject = (project: ProjectInfo) => {
@@ -431,6 +461,9 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
     if (isExecuting) abort();
     const newId = generateUUID();
     setCurrentSessionId(newId);
+    try {
+      localStorage.setItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION, newId);
+    } catch (e) {}
     setMessages([]);
     setStatusText(null);
     assistantMsgIdRef.current = null;
@@ -446,6 +479,18 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
   const handleSelectSession = (session: SessionInfo) => {
     if (isExecuting) abort();
     setCurrentSessionId(session.id);
+    try {
+      localStorage.setItem(AI_REMOTE_STORAGE_KEYS.LAST_SESSION, session.id);
+      const cached = localStorage.getItem(`${AI_REMOTE_STORAGE_KEYS.MESSAGES_PREFIX}${session.id}`);
+      if (cached) {
+        setMessages(JSON.parse(cached));
+      } else {
+        setMessages([]);
+      }
+    } catch (e) {
+      setMessages([]);
+    }
+
     setIsSessionListView(false);
 
     // If session has associated project, reflect it
@@ -453,6 +498,9 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
       const matched = projects.find((p) => p.id === session.projectId || p.path === session.cwd);
       if (matched && matched.id !== currentProject?.id) {
         setCurrentProject(matched);
+        try {
+          localStorage.setItem(AI_REMOTE_STORAGE_KEYS.LAST_PROJECT, matched.id);
+        } catch (e) {}
       }
     }
 
@@ -634,6 +682,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
         <div className="flex items-center space-x-2 min-w-0">
           {isSessionListView ? (
             <button
+              type="button"
               onClick={() => setIsSessionListView(false)}
               className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors mr-0.5"
               title="チャット画面に戻る"
@@ -662,6 +711,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                 </span>
               ) : (
                 <button
+                  type="button"
                   onClick={reconnect}
                   className="inline-flex items-center space-x-0.5 text-[9px] text-rose-400 bg-rose-950/80 border border-rose-800/80 px-1 py-0.2 rounded hover:bg-rose-900 transition-colors"
                   title="クリックして再接続"
@@ -687,6 +737,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
         <div className="flex items-center space-x-1 shrink-0">
           {/* Toggle Session List Button */}
           <button
+            type="button"
             onClick={() => setIsSessionListView(!isSessionListView)}
             className={`p-1.5 rounded transition-colors ${
               isSessionListView
@@ -701,6 +752,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
 
           {/* New Session Button */}
           <button
+            type="button"
             onClick={() => handleNewSession()}
             disabled={isExecuting}
             className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
@@ -712,6 +764,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
 
           {onOpenSettings && (
             <button
+              type="button"
               onClick={onOpenSettings}
               className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
               title="AI接続設定"
@@ -722,6 +775,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
           )}
 
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
             title="閉じる"
@@ -743,6 +797,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
           </div>
           {onOpenSettings && (
             <button
+              type="button"
               onClick={onOpenSettings}
               className="text-[10px] bg-amber-900/80 hover:bg-amber-800 text-amber-100 border border-amber-700/80 px-2 py-0.5 rounded shrink-0 ml-2 font-sans transition-colors font-bold"
             >
@@ -762,6 +817,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
           </div>
           {onOpenSettings && (
             <button
+              type="button"
               onClick={onOpenSettings}
               className="text-[10px] text-emerald-400 hover:underline shrink-0 ml-2 font-sans"
             >
@@ -783,6 +839,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                 プロジェクト一覧 ({projects.length})
               </span>
               <button
+                type="button"
                 onClick={() => {
                   requestProjects();
                   setIsAddProjectModalOpen(true);
@@ -822,6 +879,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
 
                       {projects.length > 1 && (
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleRemoveProject(proj.id);
@@ -849,6 +907,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
           {/* 2. New Session Button for Current Project */}
           <div className="p-3 border-b border-zinc-800 shrink-0 bg-zinc-900/40">
             <button
+              type="button"
               onClick={() => handleNewSession()}
               className="w-full flex items-center justify-center space-x-2 py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium shadow-md shadow-emerald-950/50 active:scale-[0.98] transition-all"
             >
@@ -864,6 +923,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
             <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase px-1">
               <span>セッション履歴 ({filteredSessions.length})</span>
               <button
+                type="button"
                 onClick={handleRefreshSessions}
                 disabled={!isAgentConnected}
                 className="p-1 rounded text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 disabled:opacity-40 transition-colors"
@@ -876,6 +936,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
             {/* Engine Segment Filter */}
             <div className="flex bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-[10px]">
               <button
+                type="button"
                 onClick={() => setEngineFilter('all')}
                 className={`flex-1 py-1 rounded-md transition-all font-medium ${
                   engineFilter === 'all'
@@ -886,6 +947,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                 すべて ({projectSessions.length})
               </button>
               <button
+                type="button"
                 onClick={() => setEngineFilter('claude')}
                 className={`flex-1 py-1 rounded-md transition-all font-medium ${
                   engineFilter === 'claude'
@@ -896,6 +958,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                 Claude ({claudeCount})
               </button>
               <button
+                type="button"
                 onClick={() => setEngineFilter('copilot')}
                 className={`flex-1 py-1 rounded-md transition-all font-medium ${
                   engineFilter === 'copilot'
@@ -960,6 +1023,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                     </div>
 
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDeleteSession(session.id);
@@ -1003,6 +1067,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                   {QUICK_PROMPTS.map((qp) => (
                     <button
                       key={qp.id}
+                      type="button"
                       onClick={() => handleQuickPromptClick(qp)}
                       disabled={isExecuting || !isAgentConnected}
                       className="bg-zinc-900/90 hover:bg-zinc-800/90 border border-zinc-800 rounded p-2 text-left transition-colors flex flex-col space-y-1 group disabled:opacity-50"
@@ -1060,6 +1125,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                         </div>
                         <div className="flex items-center space-x-1.5">
                           <button
+                            type="button"
                             onClick={() => handleCopyText(msg.id, msg.text)}
                             className="hover:text-zinc-200 flex items-center space-x-0.5"
                             title="テキストをコピー"
@@ -1079,6 +1145,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
 
                           {onApplyDraftToInput && (
                             <button
+                              type="button"
                               onClick={() => handleApplyDraft(msg.id, msg.text)}
                               className="hover:text-emerald-300 flex items-center space-x-0.5 text-zinc-300"
                               title="Mattermost返信欄に入力"
@@ -1222,6 +1289,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                 <h3 className="font-bold text-sm text-zinc-100">社内PCのフォルダを追加</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setIsAddProjectModalOpen(false)}
                 className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
               >
@@ -1234,6 +1302,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
               <div className="flex items-center justify-between text-[11px] text-zinc-400">
                 <span>PC候補 ({projectsBaseDir || '~/work'})</span>
                 <button
+                  type="button"
                   onClick={() => requestProjects()}
                   className="flex items-center space-x-0.5 text-emerald-400 hover:underline"
                 >
