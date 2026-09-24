@@ -86,5 +86,6 @@ export interface AppSettings {
   autoRefreshInterval: number; // 0, 15, 30, 60
   fontSize: 'xs' | 'sm' | 'base';
   channelSortOrder: ChannelSortOrder;
+  collapseNewlines: boolean;
 }
 

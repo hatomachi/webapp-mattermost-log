@@ -1,12 +1,14 @@
 import React from 'react';
 import { MattermostChannel } from '../types/mattermost';
-import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal } from 'lucide-react';
+import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText } from 'lucide-react';
 
 interface Props {
   activeChannel?: MattermostChannel;
   isConnected: boolean;
   isLoading: boolean;
   lastUpdated: Date | null;
+  collapseNewlines?: boolean;
+  onToggleCollapseNewlines?: () => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
   onToggleSidebar: () => void;
@@ -17,6 +19,8 @@ export const Header: React.FC<Props> = ({
   isConnected,
   isLoading,
   lastUpdated,
+  collapseNewlines = false,
+  onToggleCollapseNewlines,
   onRefresh,
   onOpenSettings,
   onToggleSidebar,
@@ -98,6 +102,21 @@ export const Header: React.FC<Props> = ({
             <span>未接続 (設定)</span>
           </button>
         ) : null}
+
+        {onToggleCollapseNewlines && (
+          <button
+            onClick={onToggleCollapseNewlines}
+            aria-label="Toggle newline collapse"
+            title={collapseNewlines ? '改行無視中（クリックで通常改行へ）' : '改行を無視して表示（クリックで切替）'}
+            className={`p-1.5 rounded transition-colors ${
+              collapseNewlines
+                ? 'bg-amber-950/80 text-amber-300 border border-amber-600/70 hover:bg-amber-900/80'
+                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+            }`}
+          >
+            <WrapText className="w-3.5 h-3.5" />
+          </button>
+        )}
 
         <button
           onClick={onRefresh}

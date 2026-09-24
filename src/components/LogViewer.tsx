@@ -11,6 +11,7 @@ import {
   Paperclip,
   Loader2,
   Filter,
+  WrapText,
 } from 'lucide-react';
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
   showSeconds: boolean;
   fontSize: 'xs' | 'sm' | 'base';
   isLoading: boolean;
+  collapseNewlines?: boolean;
+  onToggleCollapseNewlines?: () => void;
   channelName?: string;
   hasMorePosts?: boolean;
   isLoadingOlder?: boolean;
@@ -34,6 +37,8 @@ export const LogViewer: React.FC<Props> = ({
   showSeconds,
   fontSize,
   isLoading,
+  collapseNewlines = false,
+  onToggleCollapseNewlines,
   channelName,
   hasMorePosts = false,
   isLoadingOlder = false,
@@ -62,6 +67,13 @@ export const LogViewer: React.FC<Props> = ({
     if (!showSeconds) return `${h}:${m}`;
     const s = String(d.getSeconds()).padStart(2, '0');
     return `${h}:${m}:${s}`;
+  };
+
+  // 改行無視（高密度表示）時のテキスト成形
+  const formatMessageText = (text: string) => {
+    if (!text) return '';
+    if (!collapseNewlines) return text;
+    return text.replace(/\r?\n+/g, ' ');
   };
 
   const formatDateLabel = (timestamp: number) => {
@@ -326,7 +338,7 @@ export const LogViewer: React.FC<Props> = ({
 
           <button
             onClick={() => setIsFilterMode(!isFilterMode)}
-            className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] border transition-colors ${
+            className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] border transition-colors shrink-0 ${
               isFilterMode
                 ? 'bg-emerald-950 border-emerald-700 text-emerald-300 font-bold'
                 : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
@@ -334,12 +346,33 @@ export const LogViewer: React.FC<Props> = ({
             title={isFilterMode ? 'マッチした行のみ表示中（クリックで全件表示+ハイライトへ）' : '全件表示・ハイライト中（クリックでマッチ行のみへ絞り込み）'}
           >
             <Filter className="w-3 h-3" />
-            <span>{isFilterMode ? '絞込' : 'ハイライト'}</span>
+            <span className="hidden sm:inline">{isFilterMode ? '絞込' : 'ハイライト'}</span>
+            <span className="sm:hidden">{isFilterMode ? '絞込' : '全件'}</span>
           </button>
+
+          {onToggleCollapseNewlines && (
+            <button
+              onClick={onToggleCollapseNewlines}
+              className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] border transition-colors shrink-0 ${
+                collapseNewlines
+                  ? 'bg-amber-950/80 border-amber-600 text-amber-300 font-bold'
+                  : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+              }`}
+              title={
+                collapseNewlines
+                  ? '改行無視中（クリックで通常の改行表示へ戻す）'
+                  : '改行を無視して表示（クリックで1行化・全体俯瞰）'
+              }
+            >
+              <WrapText className="w-3 h-3" />
+              <span className="hidden sm:inline">{collapseNewlines ? '改行無視' : '改行あり'}</span>
+              <span className="sm:hidden">{collapseNewlines ? '無視' : '改行'}</span>
+            </button>
+          )}
         </div>
 
         {searchQuery && (
-          <span className="text-[10px] text-zinc-400 ml-2">
+          <span className="text-[10px] text-zinc-400 ml-2 shrink-0">
             一致: {displayedPosts.length} 件
           </span>
         )}
@@ -408,10 +441,14 @@ export const LogViewer: React.FC<Props> = ({
                     [{formatTime(post.create_at)}]
                   </span>
 
-                  <div className="flex-1 min-w-0 break-words whitespace-pre-wrap">
+                  <div
+                    className={`flex-1 min-w-0 break-words ${
+                      collapseNewlines ? 'whitespace-normal' : 'whitespace-pre-wrap'
+                    }`}
+                  >
                     {isSystemMessage ? (
                       <span className="text-zinc-500 italic text-[11px]">
-                        * {displayName} {post.message}
+                        * {displayName} {formatMessageText(post.message)}
                       </span>
                     ) : (
                       <>
@@ -419,7 +456,7 @@ export const LogViewer: React.FC<Props> = ({
                           {displayName}:
                         </span>
                         <span className="text-zinc-200 selection:bg-emerald-950 selection:text-emerald-200">
-                          {renderFormattedText(post.message, searchQuery)}
+                          {renderFormattedText(formatMessageText(post.message), searchQuery)}
                         </span>
 
                         {replyCount > 0 && (
@@ -479,12 +516,16 @@ export const LogViewer: React.FC<Props> = ({
                               <span className="text-zinc-600 shrink-0 text-[11px] select-none font-mono tracking-tight">
                                 [{formatTime(reply.create_at)}]
                               </span>
-                              <div className="flex-1 min-w-0 break-words whitespace-pre-wrap">
+                              <div
+                                className={`flex-1 min-w-0 break-words ${
+                                  collapseNewlines ? 'whitespace-normal' : 'whitespace-pre-wrap'
+                                }`}
+                              >
                                 <span className={`font-semibold shrink-0 mr-1.5 select-text ${replyColor}`}>
                                   {replyDisplayName}:
                                 </span>
                                 <span className="text-zinc-200">
-                                  {renderFormattedText(reply.message, searchQuery)}
+                                  {renderFormattedText(formatMessageText(reply.message), searchQuery)}
                                 </span>
                                 {renderAttachments(reply)}
                               </div>

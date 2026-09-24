@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoRefreshInterval: 30,
   fontSize: 'xs',
   channelSortOrder: 'recent',
+  collapseNewlines: false,
 };
 
 

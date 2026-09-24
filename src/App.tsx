@@ -292,6 +292,15 @@ export const App: React.FC = () => {
     saveSettings(updated);
   };
 
+  const handleToggleCollapseNewlines = () => {
+    const updated: AppSettings = {
+      ...settings,
+      collapseNewlines: !settings.collapseNewlines,
+    };
+    setSettings(updated);
+    saveSettings(updated);
+  };
+
   const activeChannel = channels.find((c) => c.id === activeChannelId);
 
   return (
@@ -302,6 +311,8 @@ export const App: React.FC = () => {
         isConnected={isConnected}
         isLoading={isLoading}
         lastUpdated={lastUpdated}
+        collapseNewlines={settings.collapseNewlines}
+        onToggleCollapseNewlines={handleToggleCollapseNewlines}
         onRefresh={() => activeChannelId && fetchPosts(activeChannelId)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
@@ -339,6 +350,8 @@ export const App: React.FC = () => {
           showSeconds={settings.showSeconds}
           fontSize={settings.fontSize}
           isLoading={isLoading}
+          collapseNewlines={settings.collapseNewlines}
+          onToggleCollapseNewlines={handleToggleCollapseNewlines}
           channelName={activeChannel?.display_name || activeChannel?.name}
           hasMorePosts={hasMorePosts}
           isLoadingOlder={isLoadingOlder}
