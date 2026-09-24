@@ -44,6 +44,13 @@ export interface MattermostFileInfo {
   has_preview_image?: boolean;
 }
 
+export interface MattermostReaction {
+  user_id: string;
+  post_id: string;
+  emoji_name: string;
+  create_at: number;
+}
+
 export interface MattermostPost {
   id: string;
   create_at: number;
@@ -54,15 +61,18 @@ export interface MattermostPost {
   root_id: string;
   message: string;
   type?: string;
+  has_reactions?: boolean;
   props?: {
     from_webhook?: string;
     override_username?: string;
+    reactions?: MattermostReaction[] | string;
     [key: string]: any;
   };
   reply_count?: number;
   file_ids?: string[];
   metadata?: {
     files?: MattermostFileInfo[];
+    reactions?: MattermostReaction[];
     [key: string]: any;
   };
 }
@@ -107,6 +117,7 @@ export interface AppSettings {
   corsProxy?: string;
   showSeconds: boolean;
   showTeamBadge: boolean;
+  showReactions: boolean;
   autoRefreshInterval: number; // 0, 15, 30, 60
   fontSize: 'xs' | 'sm' | 'base';
   channelSortOrder: ChannelSortOrder;

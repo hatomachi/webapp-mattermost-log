@@ -347,6 +347,21 @@ export const SettingsModal: React.FC<Props> = ({
                   <p className="text-[10px] text-zinc-500">ポスト内の改行を半角スペースに置き換え、ログをコンパクトに一覧表示します</p>
                 </div>
               </label>
+
+              <label className="col-span-2 flex items-center space-x-2 cursor-pointer bg-zinc-950 p-2 rounded border border-zinc-800">
+                <input
+                  type="checkbox"
+                  checked={formData.showReactions}
+                  onChange={(e) =>
+                    setFormData({ ...formData, showReactions: e.target.checked })
+                  }
+                  className="rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-0"
+                />
+                <div>
+                  <span className="text-zinc-300">スタンプ（リアクション）を表示</span>
+                  <p className="text-[10px] text-zinc-500">メッセージ末尾にスタンプと件数をインライン表示します（カスタム絵文字はテキスト表示）</p>
+                </div>
+              </label>
             </div>
 
             <div className="flex items-center justify-between text-[11px] bg-zinc-950 p-2 rounded border border-zinc-800">

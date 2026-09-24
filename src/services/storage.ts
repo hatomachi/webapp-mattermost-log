@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   corsProxy: '',
   showSeconds: true,
   showTeamBadge: true,
+  showReactions: false,
   autoRefreshInterval: 30,
   fontSize: 'xs',
   channelSortOrder: 'recent',

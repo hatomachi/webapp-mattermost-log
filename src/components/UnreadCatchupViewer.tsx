@@ -11,6 +11,9 @@ import {
   viewChannel,
   formatUserDisplayName,
   formatFileSize,
+  getPostReactions,
+  getGroupedReactions,
+  formatEmojiDisplay,
 } from '../services/mattermost';
 import {
   Check,
@@ -42,6 +45,7 @@ interface Props {
   showSeconds: boolean;
   showTeamBadge: boolean;
   collapseNewlines: boolean;
+  showReactions?: boolean;
   onSelectChannel: (channel: MattermostChannel) => void;
   onClose: () => void;
   onChannelMarkedAsRead: (channelId: string) => void;
@@ -79,6 +83,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   showSeconds,
   showTeamBadge,
   collapseNewlines,
+  showReactions = false,
   onSelectChannel,
   onClose,
   onChannelMarkedAsRead,
@@ -451,6 +456,45 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     );
   };
 
+  const renderReactions = (post: MattermostPost) => {
+    if (!showReactions) return null;
+    const reactions = getPostReactions(post);
+    if (reactions.length === 0) return null;
+    const grouped = getGroupedReactions(reactions);
+    if (grouped.length === 0) return null;
+
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1 ml-1.5 align-baseline select-none">
+        {grouped.map((r) => {
+          const { display, isUnicode } = formatEmojiDisplay(r.name);
+          const userNames = r.users
+            .map((uid) => {
+              const u = userCache[uid];
+              return formatUserDisplayName(u);
+            })
+            .filter(Boolean)
+            .join(', ');
+          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}`;
+
+          return (
+            <span
+              key={r.name}
+              title={tooltip}
+              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors ${
+                isUnicode
+                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600'
+              }`}
+            >
+              <span className={isUnicode ? 'text-xs -my-0.5' : 'text-[10px]'}>{display}</span>
+              <span className="text-[9px] text-zinc-400 font-semibold">{r.count}</span>
+            </span>
+          );
+        })}
+      </span>
+    );
+  };
+
   const getChannelIcon = (type: string) => {
     switch (type) {
       case 'P':
@@ -661,6 +705,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                             {/* Message */}
                             <div className="flex-1 text-zinc-200 break-words whitespace-pre-wrap select-text">
                               {renderFormattedText(post.message)}
+                              {renderReactions(post)}
                               {renderAttachments(post)}
                             </div>
                           </div>

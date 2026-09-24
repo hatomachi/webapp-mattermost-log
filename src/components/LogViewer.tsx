@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { MattermostPost, MattermostUser, MattermostFileInfo } from '../types/mattermost';
-import { formatUserDisplayName, formatFileSize } from '../services/mattermost';
+import {
+  formatUserDisplayName,
+  formatFileSize,
+  getPostReactions,
+  getGroupedReactions,
+  formatEmojiDisplay,
+} from '../services/mattermost';
 import {
   ArrowDown,
   CornerDownRight,
@@ -12,6 +18,7 @@ import {
   Loader2,
   Filter,
   WrapText,
+  Smile,
 } from 'lucide-react';
 
 interface Props {
@@ -22,6 +29,8 @@ interface Props {
   isLoading: boolean;
   collapseNewlines?: boolean;
   onToggleCollapseNewlines?: () => void;
+  showReactions?: boolean;
+  onToggleShowReactions?: () => void;
   channelName?: string;
   hasMorePosts?: boolean;
   isLoadingOlder?: boolean;
@@ -39,6 +48,8 @@ export const LogViewer: React.FC<Props> = ({
   isLoading,
   collapseNewlines = false,
   onToggleCollapseNewlines,
+  showReactions = false,
+  onToggleShowReactions,
   channelName,
   hasMorePosts = false,
   isLoadingOlder = false,
@@ -290,6 +301,46 @@ export const LogViewer: React.FC<Props> = ({
     );
   };
 
+  // スタンプ（リアクション）描画（行を増やさないインライン表示）
+  const renderReactions = (post: MattermostPost) => {
+    if (!showReactions) return null;
+    const reactions = getPostReactions(post);
+    if (reactions.length === 0) return null;
+    const grouped = getGroupedReactions(reactions);
+    if (grouped.length === 0) return null;
+
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1 ml-1.5 align-baseline select-none">
+        {grouped.map((r) => {
+          const { display, isUnicode } = formatEmojiDisplay(r.name);
+          const userNames = r.users
+            .map((uid) => {
+              const u = userCache[uid];
+              return formatUserDisplayName(u);
+            })
+            .filter(Boolean)
+            .join(', ');
+          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}`;
+
+          return (
+            <span
+              key={r.name}
+              title={tooltip}
+              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors ${
+                isUnicode
+                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600'
+              }`}
+            >
+              <span className={isUnicode ? 'text-xs -my-0.5' : 'text-[10px]'}>{display}</span>
+              <span className="text-[9px] text-zinc-400 font-semibold">{r.count}</span>
+            </span>
+          );
+        })}
+      </span>
+    );
+  };
+
   if (!channelName) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-zinc-500 font-mono text-center">
@@ -367,6 +418,26 @@ export const LogViewer: React.FC<Props> = ({
               <WrapText className="w-3 h-3" />
               <span className="hidden sm:inline">{collapseNewlines ? '改行無視' : '改行あり'}</span>
               <span className="sm:hidden">{collapseNewlines ? '無視' : '改行'}</span>
+            </button>
+          )}
+
+          {onToggleShowReactions && (
+            <button
+              onClick={onToggleShowReactions}
+              className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] border transition-colors shrink-0 ${
+                showReactions
+                  ? 'bg-amber-950/80 border-amber-600 text-amber-300 font-bold'
+                  : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+              }`}
+              title={
+                showReactions
+                  ? 'スタンプ表示中（クリックで非表示）'
+                  : 'スタンプを表示（クリックで切替）'
+              }
+            >
+              <Smile className="w-3 h-3" />
+              <span className="hidden sm:inline">{showReactions ? 'スタンプ' : 'スタンプ無'}</span>
+              <span className="sm:hidden">{showReactions ? 'スタンプ' : '絵無'}</span>
             </button>
           )}
         </div>
@@ -459,6 +530,8 @@ export const LogViewer: React.FC<Props> = ({
                           {renderFormattedText(formatMessageText(post.message), searchQuery)}
                         </span>
 
+                        {renderReactions(post)}
+
                         {replyCount > 0 && (
                           <button
                             onClick={() => toggleThread(post.id)}
@@ -527,6 +600,7 @@ export const LogViewer: React.FC<Props> = ({
                                 <span className="text-zinc-200">
                                   {renderFormattedText(formatMessageText(reply.message), searchQuery)}
                                 </span>
+                                {renderReactions(reply)}
                                 {renderAttachments(reply)}
                               </div>
                             </div>

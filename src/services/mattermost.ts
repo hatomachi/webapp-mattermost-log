@@ -3,6 +3,7 @@ import {
   MattermostChannelMember,
   MattermostPost,
   MattermostPostListResponse,
+  MattermostReaction,
   MattermostTeam,
   MattermostUser,
 } from '../types/mattermost';
@@ -280,4 +281,157 @@ export const formatUserDisplayName = (
 
   return user.username || fallbackUsername || '不明';
 };
+
+export interface GroupedReaction {
+  name: string;
+  count: number;
+  users: string[];
+}
+
+export const COMMON_EMOJI_MAP: Record<string, string> = {
+  '+1': '👍',
+  'thumbsup': '👍',
+  '-1': '👎',
+  'thumbsdown': '👎',
+  'heart': '❤️',
+  'heart_eyes': '😍',
+  'kissing_heart': '😘',
+  'broken_heart': '💔',
+  'smile': '😄',
+  'smiley': '😃',
+  'grinning': '😀',
+  'grin': '😁',
+  'joy': '😂',
+  'rofl': '🤣',
+  'sweat_smile': '😅',
+  'laughing': '😆',
+  'innocent': '😇',
+  'blush': '😊',
+  'wink': '😉',
+  'relaxed': '☺️',
+  'yum': '😋',
+  'stuck_out_tongue': '😛',
+  'stuck_out_tongue_closed_eyes': '😝',
+  'stuck_out_tongue_winking_eye': '😜',
+  'thinking_face': '🤔',
+  'thinking': '🤔',
+  'shrug': '🤷',
+  'facepalm': '🤦',
+  'saluting_face': '🫡',
+  'raised_hands': '🙌',
+  'clap': '👏',
+  'pray': '🙏',
+  'ok_hand': '👌',
+  'pinching_hand': '🤏',
+  'victory_hand': '✌️',
+  'v': '✌️',
+  'crossed_fingers': '🤞',
+  'punch': '👊',
+  'fist': '✊',
+  'wave': '👋',
+  'muscle': '💪',
+  'eyes': '👀',
+  'eye': '👁️',
+  'point_up': '☝️',
+  'point_down': '👇',
+  'point_left': '👈',
+  'point_right': '👉',
+  'white_check_mark': '✅',
+  'heavy_check_mark': '✔️',
+  'check': '✅',
+  'x': '❌',
+  'negative_squared_cross_mark': '❎',
+  'question': '❓',
+  'grey_question': '❔',
+  'exclamation': '❗',
+  'grey_exclamation': '❕',
+  'tada': '🎉',
+  'sparkles': '✨',
+  'fire': '🔥',
+  'star': '⭐',
+  'star2': '🌟',
+  '100': '💯',
+  'rocket': '🚀',
+  'warning': '⚠️',
+  'zap': '⚡',
+  'boom': '💥',
+  'collision': '💥',
+  'bow': '🙇',
+  'sweat': '😓',
+  'cry': '😢',
+  'sob': '😭',
+  'disappointed': '😞',
+  'pleading_face': '🥺',
+  'screaming': '😱',
+  'scream': '😱',
+  'tired_face': '😫',
+  'astonished': '😲',
+  'coffee': '☕',
+  'tea': '🍵',
+  'beer': '🍺',
+  'beers': '🍻',
+  'cake': '🍰',
+  'memo': '📝',
+  'bulb': '💡',
+  'eyes_rolling': '🙄',
+  'rolling_eyes': '🙄',
+};
+
+/**
+ * 投稿からリアクション配列を安全に抽出
+ */
+export const getPostReactions = (post: MattermostPost): MattermostReaction[] => {
+  if (post.metadata?.reactions && Array.isArray(post.metadata.reactions)) {
+    return post.metadata.reactions;
+  }
+  if (post.props?.reactions) {
+    if (Array.isArray(post.props.reactions)) {
+      return post.props.reactions;
+    }
+    if (typeof post.props.reactions === 'string') {
+      try {
+        const parsed = JSON.parse(post.props.reactions);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+  }
+  return [];
+};
+
+/**
+ * リアクションを絵文字名ごとにグルーピング・集計
+ */
+export const getGroupedReactions = (reactions?: MattermostReaction[]): GroupedReaction[] => {
+  if (!reactions || reactions.length === 0) return [];
+  const map = new Map<string, GroupedReaction>();
+  for (const r of reactions) {
+    const name = r.emoji_name;
+    if (!name) continue;
+    const existing = map.get(name);
+    if (existing) {
+      existing.count += 1;
+      existing.users.push(r.user_id);
+    } else {
+      map.set(name, {
+        name,
+        count: 1,
+        users: [r.user_id],
+      });
+    }
+  }
+  return Array.from(map.values());
+};
+
+/**
+ * 絵文字名を表示用文字列に変換（標準絵文字ならUnicode、カスタム絵文字なら :name:）
+ */
+export const formatEmojiDisplay = (emojiName: string): { display: string; isUnicode: boolean } => {
+  const cleanName = emojiName.replace(/^:+|:+$/g, '');
+  const unicodeEmoji = COMMON_EMOJI_MAP[cleanName];
+  if (unicodeEmoji) {
+    return { display: unicodeEmoji, isUnicode: true };
+  }
+  return { display: `:${cleanName}:`, isUnicode: false };
+};
+
 

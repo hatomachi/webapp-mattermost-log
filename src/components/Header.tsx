@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppViewMode, MattermostChannel } from '../types/mattermost';
-import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen } from 'lucide-react';
+import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile } from 'lucide-react';
 
 interface Props {
   activeChannel?: MattermostChannel;
@@ -9,6 +9,8 @@ interface Props {
   lastUpdated: Date | null;
   collapseNewlines?: boolean;
   onToggleCollapseNewlines?: () => void;
+  showReactions?: boolean;
+  onToggleShowReactions?: () => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
   onToggleSidebar: () => void;
@@ -24,6 +26,8 @@ export const Header: React.FC<Props> = ({
   lastUpdated,
   collapseNewlines = false,
   onToggleCollapseNewlines,
+  showReactions = false,
+  onToggleShowReactions,
   onRefresh,
   onOpenSettings,
   onToggleSidebar,
@@ -165,6 +169,21 @@ export const Header: React.FC<Props> = ({
             }`}
           >
             <WrapText className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {onToggleShowReactions && (
+          <button
+            onClick={onToggleShowReactions}
+            aria-label="Toggle reactions"
+            title={showReactions ? 'スタンプ表示中（クリックで非表示）' : 'スタンプ非表示中（クリックで表示）'}
+            className={`p-1.5 rounded transition-colors ${
+              showReactions
+                ? 'bg-amber-950/80 text-amber-300 border border-amber-600/70 hover:bg-amber-900/80'
+                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+            }`}
+          >
+            <Smile className="w-3.5 h-3.5" />
           </button>
         )}
 

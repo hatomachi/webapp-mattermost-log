@@ -362,6 +362,15 @@ export const App: React.FC = () => {
     saveSettings(updated);
   };
 
+  const handleToggleShowReactions = () => {
+    const updated: AppSettings = {
+      ...settings,
+      showReactions: !settings.showReactions,
+    };
+    setSettings(updated);
+    saveSettings(updated);
+  };
+
   const activeChannel = channels.find((c) => c.id === activeChannelId);
 
   return (
@@ -374,6 +383,8 @@ export const App: React.FC = () => {
         lastUpdated={lastUpdated}
         collapseNewlines={settings.collapseNewlines}
         onToggleCollapseNewlines={handleToggleCollapseNewlines}
+        showReactions={settings.showReactions}
+        onToggleShowReactions={handleToggleShowReactions}
         onRefresh={() => activeChannelId && fetchPosts(activeChannelId)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
@@ -423,6 +434,7 @@ export const App: React.FC = () => {
             showSeconds={settings.showSeconds}
             showTeamBadge={settings.showTeamBadge}
             collapseNewlines={settings.collapseNewlines}
+            showReactions={settings.showReactions}
             onSelectChannel={handleSelectChannel}
             onClose={() => setViewMode('log')}
             onChannelMarkedAsRead={handleChannelMarkedAsRead}
@@ -437,6 +449,8 @@ export const App: React.FC = () => {
             isLoading={isLoading}
             collapseNewlines={settings.collapseNewlines}
             onToggleCollapseNewlines={handleToggleCollapseNewlines}
+            showReactions={settings.showReactions}
+            onToggleShowReactions={handleToggleShowReactions}
             channelName={activeChannel?.display_name || activeChannel?.name}
             hasMorePosts={hasMorePosts}
             isLoadingOlder={isLoadingOlder}
