@@ -76,6 +76,30 @@ export interface MattermostPostListResponse {
 
 export type ChannelSortOrder = 'recent' | 'name';
 
+export interface MattermostChannelMember {
+  channel_id: string;
+  user_id: string;
+  roles: string;
+  last_viewed_at: number;
+  msg_count: number;
+  mention_count: number;
+  notify_props?: Record<string, any>;
+  last_update_at?: number;
+}
+
+export interface UnreadChannelData {
+  channel: MattermostChannel;
+  member?: MattermostChannelMember;
+  unreadCount: number;
+  mentionCount: number;
+  posts: MattermostPost[];
+  isLoading: boolean;
+  isRead: boolean;
+  error?: string;
+}
+
+export type AppViewMode = 'log' | 'catchup';
+
 export interface AppSettings {
   serverUrl: string;
   token: string;
@@ -88,4 +112,5 @@ export interface AppSettings {
   channelSortOrder: ChannelSortOrder;
   collapseNewlines: boolean;
 }
+
 

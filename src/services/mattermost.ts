@@ -1,5 +1,6 @@
 import {
   MattermostChannel,
+  MattermostChannelMember,
   MattermostPost,
   MattermostPostListResponse,
   MattermostTeam,
@@ -119,6 +120,43 @@ export const getTeamChannels = async (
   );
 };
 
+export const getTeamChannelMembers = async (
+  serverUrl: string,
+  token: string,
+  teamId: string,
+  corsProxy?: string
+): Promise<MattermostChannelMember[]> => {
+  return request<MattermostChannelMember[]>(
+    serverUrl,
+    token,
+    `/api/v4/users/me/teams/${teamId}/channels/members`,
+    {},
+    corsProxy
+  );
+};
+
+export const viewChannel = async (
+  serverUrl: string,
+  token: string,
+  channelId: string,
+  prevChannelId: string = '',
+  corsProxy?: string
+): Promise<{ status: string }> => {
+  return request<{ status: string }>(
+    serverUrl,
+    token,
+    '/api/v4/channels/members/me/view',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        channel_id: channelId,
+        prev_channel_id: prevChannelId,
+      }),
+    },
+    corsProxy
+  );
+};
+
 export const getChannelPosts = async (
   serverUrl: string,
   token: string,
@@ -126,7 +164,8 @@ export const getChannelPosts = async (
   page: number = 0,
   perPage: number = 60,
   before?: string,
-  corsProxy?: string
+  corsProxy?: string,
+  since?: number
 ): Promise<MattermostPostListResponse> => {
   const queryParams = new URLSearchParams({
     page: String(page),
@@ -134,6 +173,9 @@ export const getChannelPosts = async (
   });
   if (before) {
     queryParams.set('before', before);
+  }
+  if (since !== undefined && since > 0) {
+    queryParams.set('since', String(since));
   }
   return request<MattermostPostListResponse>(
     serverUrl,

@@ -1,16 +1,18 @@
 import React, { useState, useMemo } from 'react';
-import { ChannelSortOrder, MattermostChannel } from '../types/mattermost';
-import { Search, Hash, Lock, User, Users, X, Layers, ArrowUpDown, Clock, ArrowDownAZ } from 'lucide-react';
+import { ChannelSortOrder, MattermostChannel, MattermostChannelMember } from '../types/mattermost';
+import { Search, Hash, Lock, User, Users, X, Layers, Clock, ArrowDownAZ, Sparkles, AtSign } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
   channels: MattermostChannel[];
+  channelMembers?: Record<string, MattermostChannelMember>;
   activeChannelId: string;
   onSelectChannel: (channel: MattermostChannel) => void;
   onClose: () => void;
   showTeamBadge: boolean;
   sortOrder: ChannelSortOrder;
   onToggleSortOrder: (order: ChannelSortOrder) => void;
+  onOpenCatchup?: () => void;
 }
 
 const formatRelativeTime = (timestamp?: number): string => {
@@ -28,20 +30,46 @@ const formatRelativeTime = (timestamp?: number): string => {
 export const ChannelSidebar: React.FC<Props> = ({
   isOpen,
   channels,
+  channelMembers = {},
   activeChannelId,
   onSelectChannel,
   onClose,
   showTeamBadge,
   sortOrder,
   onToggleSortOrder,
+  onOpenCatchup,
 }) => {
   const [filterText, setFilterText] = useState('');
-  const [selectedType, setSelectedType] = useState<string>('ALL');
+  const [selectedType, setSelectedType] = useState<string>('ALL'); // ALL, UNREAD, CHANNELS, DM
+
+  // 未読情報ヘルパー
+  const getUnreadInfo = (ch: MattermostChannel) => {
+    const member = channelMembers[ch.id];
+    if (!member) return { isUnread: false, unreadCount: 0, mentionCount: 0 };
+    const isUnread =
+      ch.last_post_at > (member.last_viewed_at || 0) &&
+      ch.total_msg_count > (member.msg_count || 0);
+    const unreadCount = isUnread
+      ? Math.max(1, ch.total_msg_count - (member.msg_count || 0))
+      : 0;
+    return {
+      isUnread,
+      unreadCount,
+      mentionCount: member.mention_count || 0,
+    };
+  };
+
+  const totalUnreadChannels = useMemo(() => {
+    return channels.filter((ch) => getUnreadInfo(ch).isUnread).length;
+  }, [channels, channelMembers]);
 
   const filteredAndSortedChannels = useMemo(() => {
     const filtered = channels.filter((ch) => {
       // Type filter
       if (selectedType !== 'ALL') {
+        if (selectedType === 'UNREAD') {
+          if (!getUnreadInfo(ch).isUnread) return false;
+        }
         if (selectedType === 'CHANNELS' && ch.type !== 'O' && ch.type !== 'P') return false;
         if (selectedType === 'DM' && ch.type !== 'D' && ch.type !== 'G') return false;
       }
@@ -56,6 +84,14 @@ export const ChannelSidebar: React.FC<Props> = ({
     });
 
     return [...filtered].sort((a, b) => {
+      // 未読フィルター時はメンションと更新順を優先
+      if (selectedType === 'UNREAD') {
+        const unreadA = getUnreadInfo(a);
+        const unreadB = getUnreadInfo(b);
+        if (unreadA.mentionCount !== unreadB.mentionCount) {
+          return unreadB.mentionCount - unreadA.mentionCount;
+        }
+      }
       if (sortOrder === 'recent') {
         const timeA = a.last_post_at || 0;
         const timeB = b.last_post_at || 0;
@@ -69,7 +105,7 @@ export const ChannelSidebar: React.FC<Props> = ({
       }
       return (a.display_name || a.name).localeCompare(b.display_name || b.name, 'ja');
     });
-  }, [channels, filterText, selectedType, sortOrder]);
+  }, [channels, filterText, selectedType, sortOrder, channelMembers]);
 
   const getChannelIcon = (type: string) => {
     switch (type) {
@@ -112,6 +148,27 @@ export const ChannelSidebar: React.FC<Props> = ({
           </button>
         </div>
 
+        {/* Catchup Button Banner (if unreads exist) */}
+        {totalUnreadChannels > 0 && onOpenCatchup && (
+          <div className="p-2 border-b border-emerald-900/50 bg-emerald-950/40">
+            <button
+              onClick={() => {
+                onOpenCatchup();
+                if (window.innerWidth < 768) onClose();
+              }}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors shadow-sm"
+            >
+              <div className="flex items-center space-x-1.5">
+                <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                <span>未読キャッチアップ</span>
+              </div>
+              <span className="bg-emerald-800 px-1.5 py-0.2 rounded-full text-[10px]">
+                {totalUnreadChannels}
+              </span>
+            </button>
+          </div>
+        )}
+
         {/* Search & Filter Bar */}
         <div className="p-2 space-y-1.5 border-b border-zinc-800/80 bg-zinc-900/40">
           <div className="relative">
@@ -145,6 +202,23 @@ export const ChannelSidebar: React.FC<Props> = ({
                 }`}
               >
                 全件
+              </button>
+              <button
+                onClick={() => setSelectedType('UNREAD')}
+                className={`px-1.5 py-0.5 rounded transition-colors flex items-center space-x-0.5 ${
+                  selectedType === 'UNREAD'
+                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold'
+                    : totalUnreadChannels > 0
+                    ? 'text-emerald-400 hover:text-emerald-300 font-semibold'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                <span>未読</span>
+                {totalUnreadChannels > 0 && (
+                  <span className="text-[9px] bg-emerald-900/80 text-emerald-200 px-1 rounded-full">
+                    {totalUnreadChannels}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setSelectedType('CHANNELS')}
@@ -201,6 +275,8 @@ export const ChannelSidebar: React.FC<Props> = ({
             filteredAndSortedChannels.map((ch) => {
               const isActive = ch.id === activeChannelId;
               const relativeTime = formatRelativeTime(ch.last_post_at);
+              const unreadInfo = getUnreadInfo(ch);
+
               return (
                 <button
                   key={ch.id}
@@ -210,6 +286,8 @@ export const ChannelSidebar: React.FC<Props> = ({
                   className={`w-full text-left px-2 py-1.5 rounded flex items-center space-x-1.5 transition-colors group ${
                     isActive
                       ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 font-bold'
+                      : unreadInfo.isUnread
+                      ? 'text-zinc-100 font-bold hover:bg-zinc-900'
                       : 'text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100'
                   }`}
                 >
@@ -231,6 +309,20 @@ export const ChannelSidebar: React.FC<Props> = ({
                   <span className="text-xs truncate flex-1 font-mono">
                     {ch.display_name || ch.name}
                   </span>
+
+                  {/* Mention badge */}
+                  {unreadInfo.mentionCount > 0 && (
+                    <span className="text-[9px] bg-rose-950 border border-rose-700 text-rose-300 px-1 py-0.1 rounded-full font-bold shrink-0">
+                      @{unreadInfo.mentionCount}
+                    </span>
+                  )}
+
+                  {/* Unread count badge */}
+                  {unreadInfo.isUnread && (
+                    <span className="text-[9px] bg-emerald-900/80 border border-emerald-700/60 text-emerald-300 px-1 py-0.1 rounded-full font-bold shrink-0">
+                      {unreadInfo.unreadCount}
+                    </span>
+                  )}
 
                   {relativeTime && (
                     <span className="text-[10px] text-zinc-600 shrink-0 font-normal">

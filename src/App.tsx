@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   AppSettings,
+  AppViewMode,
   ChannelSortOrder,
   MattermostChannel,
+  MattermostChannelMember,
   MattermostPost,
   MattermostTeam,
   MattermostUser,
@@ -18,6 +20,7 @@ import {
 import {
   getMyTeams,
   getTeamChannels,
+  getTeamChannelMembers,
   getChannelPosts,
   getPostThread,
   getUsersByIds,
@@ -25,6 +28,7 @@ import {
 import { Header } from './components/Header';
 import { ChannelSidebar } from './components/ChannelSidebar';
 import { LogViewer } from './components/LogViewer';
+import { UnreadCatchupViewer } from './components/UnreadCatchupViewer';
 import { SettingsModal } from './components/SettingsModal';
 
 export const App: React.FC = () => {
@@ -32,7 +36,9 @@ export const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+  const [viewMode, setViewMode] = useState<AppViewMode>('log');
   const [channels, setChannels] = useState<MattermostChannel[]>([]);
+  const [channelMembers, setChannelMembers] = useState<Record<string, MattermostChannelMember>>({});
   const [activeChannelId, setActiveChannelId] = useState<string>(loadActiveChannelId);
   const [posts, setPosts] = useState<MattermostPost[]>([]);
   const [userCache, setUserCache] = useState<Record<string, MattermostUser>>(loadUserCache);
@@ -109,20 +115,37 @@ export const App: React.FC = () => {
           : teams.map((t) => t.id);
 
       const allChannels: MattermostChannel[] = [];
+      const memberMap: Record<string, MattermostChannelMember> = {};
 
       for (const teamId of targetTeamIds) {
         try {
-          const chs = await getTeamChannels(
-            currentSettings.serverUrl,
-            currentSettings.token,
-            teamId,
-            currentSettings.corsProxy
-          );
+          const [chs, members] = await Promise.all([
+            getTeamChannels(
+              currentSettings.serverUrl,
+              currentSettings.token,
+              teamId,
+              currentSettings.corsProxy
+            ),
+            getTeamChannelMembers(
+              currentSettings.serverUrl,
+              currentSettings.token,
+              teamId,
+              currentSettings.corsProxy
+            ).catch((e) => {
+              console.warn(`Failed to fetch channel members for team ${teamId}:`, e);
+              return [] as MattermostChannelMember[];
+            }),
+          ]);
+
           const team = teamMap.get(teamId);
           chs.forEach((c) => {
             c.team_display_name = team ? team.display_name || team.name : undefined;
           });
           allChannels.push(...chs);
+
+          members.forEach((m) => {
+            memberMap[m.channel_id] = m;
+          });
         } catch (e) {
           console.warn(`Failed to fetch channels for team ${teamId}:`, e);
         }
@@ -134,6 +157,7 @@ export const App: React.FC = () => {
       );
 
       setChannels(uniqueChannels);
+      setChannelMembers(memberMap);
 
       // アクティブチャンネルが未設定、または存在しない場合は先頭を選択
       if (uniqueChannels.length > 0) {
@@ -149,6 +173,37 @@ export const App: React.FC = () => {
       setIsLoading(false);
     }
   }, [activeChannelId]);
+
+  // 未読チャンネル数の算出
+  const unreadChannelCount = useMemo(() => {
+    return channels.filter((ch) => {
+      const m = channelMembers[ch.id];
+      return (
+        m &&
+        ch.last_post_at > (m.last_viewed_at || 0) &&
+        ch.total_msg_count > (m.msg_count || 0)
+      );
+    }).length;
+  }, [channels, channelMembers]);
+
+  // チャンネル既読化ハンドラー（キャッチアップ画面からの既読化通知）
+  const handleChannelMarkedAsRead = useCallback((channelId: string) => {
+    const ch = channels.find((c) => c.id === channelId);
+    setChannelMembers((prev) => {
+      const existing = prev[channelId];
+      return {
+        ...prev,
+        [channelId]: {
+          channel_id: channelId,
+          user_id: existing?.user_id || '',
+          roles: existing?.roles || '',
+          last_viewed_at: Date.now(),
+          msg_count: ch ? ch.total_msg_count : existing?.msg_count || 0,
+          mention_count: 0,
+        },
+      };
+    });
+  }, [channels]);
 
   // 初期ロード & 設定変更時のチャンネル取得
   useEffect(() => {
@@ -275,6 +330,7 @@ export const App: React.FC = () => {
   const handleSelectChannel = (channel: MattermostChannel) => {
     setActiveChannelId(channel.id);
     saveActiveChannelId(channel.id);
+    setViewMode('log');
     if (window.innerWidth < 768) {
       setIsSidebarOpen(false);
     }
@@ -316,6 +372,9 @@ export const App: React.FC = () => {
         onRefresh={() => activeChannelId && fetchPosts(activeChannelId)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+        viewMode={viewMode}
+        unreadChannelCount={unreadChannelCount}
+        onToggleViewMode={() => setViewMode((prev) => (prev === 'catchup' ? 'log' : 'catchup'))}
       />
 
       {/* Error alert banner */}
@@ -331,35 +390,57 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Main Content: Sidebar + LogViewer */}
+      {/* Main Content: Sidebar + (LogViewer or UnreadCatchupViewer) */}
       <div className="flex-1 flex overflow-hidden relative">
         <ChannelSidebar
           isOpen={isSidebarOpen}
           channels={channels}
+          channelMembers={channelMembers}
           activeChannelId={activeChannelId}
           onSelectChannel={handleSelectChannel}
           onClose={() => setIsSidebarOpen(false)}
           showTeamBadge={settings.showTeamBadge}
           sortOrder={settings.channelSortOrder || 'recent'}
           onToggleSortOrder={handleToggleSortOrder}
+          onOpenCatchup={() => setViewMode('catchup')}
         />
 
-        <LogViewer
-          posts={posts}
-          userCache={userCache}
-          showSeconds={settings.showSeconds}
-          fontSize={settings.fontSize}
-          isLoading={isLoading}
-          collapseNewlines={settings.collapseNewlines}
-          onToggleCollapseNewlines={handleToggleCollapseNewlines}
-          channelName={activeChannel?.display_name || activeChannel?.name}
-          hasMorePosts={hasMorePosts}
-          isLoadingOlder={isLoadingOlder}
-          onLoadOlderPosts={handleLoadOlderPosts}
-          threadPosts={threadPosts}
-          loadingThreads={loadingThreads}
-          onFetchThread={handleFetchThread}
-        />
+        {viewMode === 'catchup' ? (
+          <UnreadCatchupViewer
+            serverUrl={settings.serverUrl}
+            token={settings.token}
+            corsProxy={settings.corsProxy}
+            channels={channels}
+            channelMembers={channelMembers}
+            userCache={userCache}
+            resolveMissingUsers={resolveMissingUsers}
+            fontSize={settings.fontSize}
+            showSeconds={settings.showSeconds}
+            showTeamBadge={settings.showTeamBadge}
+            collapseNewlines={settings.collapseNewlines}
+            onSelectChannel={handleSelectChannel}
+            onClose={() => setViewMode('log')}
+            onChannelMarkedAsRead={handleChannelMarkedAsRead}
+            onRefreshUnreads={() => fetchChannels(settings)}
+          />
+        ) : (
+          <LogViewer
+            posts={posts}
+            userCache={userCache}
+            showSeconds={settings.showSeconds}
+            fontSize={settings.fontSize}
+            isLoading={isLoading}
+            collapseNewlines={settings.collapseNewlines}
+            onToggleCollapseNewlines={handleToggleCollapseNewlines}
+            channelName={activeChannel?.display_name || activeChannel?.name}
+            hasMorePosts={hasMorePosts}
+            isLoadingOlder={isLoadingOlder}
+            onLoadOlderPosts={handleLoadOlderPosts}
+            threadPosts={threadPosts}
+            loadingThreads={loadingThreads}
+            onFetchThread={handleFetchThread}
+          />
+        )}
       </div>
 
       {/* Settings Modal */}
