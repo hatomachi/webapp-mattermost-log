@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   token: '',
   selectedTeamIds: [],
   corsProxy: '',
+  webUrl: '',
   showSeconds: true,
   showTeamBadge: true,
   showReactions: false,

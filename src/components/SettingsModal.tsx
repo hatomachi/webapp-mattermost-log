@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings, MattermostTeam } from '../types/mattermost';
 import { getMe, getMyTeams } from '../services/mattermost';
-import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye } from 'lucide-react';
+import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -203,6 +203,26 @@ export const SettingsModal: React.FC<Props> = ({
             />
             <p className="text-[10px] text-zinc-500 mt-1">
               ブラウザから直接 Mattermost に CORS 接続できない場合のみ指定します
+            </p>
+          </div>
+
+          {/* Direct Link Mattermost URL (Optional) */}
+          <div>
+            <label className="flex items-center space-x-1.5 text-zinc-400 font-semibold mb-1">
+              <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+              <span>直接リンク用 Mattermost URL（オプション）</span>
+            </label>
+            <input
+              type="text"
+              placeholder="例: https://mattermost.example.com（未指定時はサーバーURLを使用）"
+              value={formData.webUrl || ''}
+              onChange={(e) =>
+                setFormData({ ...formData, webUrl: e.target.value })
+              }
+              className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-500"
+            />
+            <p className="text-[10px] text-zinc-500 mt-1">
+              チャンネルリンクからブラウザで開くMattermostのベースURLです。API接続用URLと異なる場合のみ指定します
             </p>
           </div>
 

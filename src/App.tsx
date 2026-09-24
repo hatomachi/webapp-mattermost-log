@@ -437,7 +437,12 @@ export const App: React.FC = () => {
   };
 
   const activeChannel = channels.find((c) => c.id === activeChannelId);
-  const activeChannelUrl = buildMattermostChannelUrl(settings.serverUrl, activeChannel, teams);
+  const activeChannelUrl = buildMattermostChannelUrl(
+    settings.serverUrl,
+    activeChannel,
+    teams,
+    settings.webUrl
+  );
 
   return (
     <div className="flex flex-col h-screen w-screen bg-zinc-950 text-zinc-100 overflow-hidden select-none font-mono">
@@ -487,6 +492,7 @@ export const App: React.FC = () => {
           onToggleSortOrder={handleToggleSortOrder}
           onOpenCatchup={() => setViewMode('catchup')}
           serverUrl={settings.serverUrl}
+          webUrl={settings.webUrl}
           teams={teams}
         />
 
@@ -509,6 +515,7 @@ export const App: React.FC = () => {
             onChannelMarkedAsRead={handleChannelMarkedAsRead}
             onRefreshUnreads={() => fetchChannels(settings)}
             teams={teams}
+            webUrl={settings.webUrl}
           />
         ) : (
           <LogViewer

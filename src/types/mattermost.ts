@@ -116,6 +116,7 @@ export interface AppSettings {
   token: string;
   selectedTeamIds: string[];
   corsProxy?: string;
+  webUrl?: string;
   showSeconds: boolean;
   showTeamBadge: boolean;
   showReactions: boolean;

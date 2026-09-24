@@ -15,6 +15,7 @@ interface Props {
   onToggleSortOrder: (order: ChannelSortOrder) => void;
   onOpenCatchup?: () => void;
   serverUrl?: string;
+  webUrl?: string;
   teams?: MattermostTeam[];
 }
 
@@ -42,6 +43,7 @@ export const ChannelSidebar: React.FC<Props> = ({
   onToggleSortOrder,
   onOpenCatchup,
   serverUrl,
+  webUrl,
   teams,
 }) => {
   const [filterText, setFilterText] = useState('');
@@ -281,9 +283,7 @@ export const ChannelSidebar: React.FC<Props> = ({
               const isActive = ch.id === activeChannelId;
               const relativeTime = formatRelativeTime(ch.last_post_at);
               const unreadInfo = getUnreadInfo(ch);
-              const channelUrl = serverUrl
-                ? buildMattermostChannelUrl(serverUrl, ch, teams)
-                : '';
+              const channelUrl = buildMattermostChannelUrl(serverUrl, ch, teams, webUrl);
 
               return (
                 <div

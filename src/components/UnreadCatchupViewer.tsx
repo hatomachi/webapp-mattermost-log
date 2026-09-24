@@ -54,6 +54,7 @@ interface Props {
   onChannelMarkedAsRead: (channelId: string) => void;
   onRefreshUnreads: () => Promise<void>;
   teams?: MattermostTeam[];
+  webUrl?: string;
 }
 
 interface UnreadChannelItem {
@@ -93,6 +94,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   onChannelMarkedAsRead,
   onRefreshUnreads,
   teams,
+  webUrl,
 }) => {
   const [channelStates, setChannelStates] = useState<Record<string, ChannelCatchupState>>({});
   const [isInitializing, setIsInitializing] = useState(true);
@@ -605,7 +607,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
           activeChannelList.map((state) => {
             const { channel, posts, isLoading, isMarkingRead, unreadCount, mentionCount, error } =
               state;
-            const mmUrl = buildMattermostChannelUrl(serverUrl, channel, teams);
+            const mmUrl = buildMattermostChannelUrl(serverUrl, channel, teams, webUrl);
 
             return (
               <div

@@ -472,10 +472,12 @@ export const createPost = async (
 export const buildMattermostChannelUrl = (
   serverUrl?: string,
   channel?: MattermostChannel | null,
-  teams?: MattermostTeam[]
+  teams?: MattermostTeam[],
+  webUrl?: string
 ): string => {
-  if (!serverUrl || !channel) return '';
-  const base = serverUrl.trim().replace(/\/+$/, '');
+  const targetBaseUrl = (webUrl && webUrl.trim() !== '') ? webUrl : serverUrl;
+  if (!targetBaseUrl || !channel) return '';
+  const base = targetBaseUrl.trim().replace(/\/+$/, '');
 
   // チーム名の特定
   let teamName = channel.team_name;
