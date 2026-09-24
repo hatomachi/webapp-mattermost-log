@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppViewMode, MattermostChannel } from '../types/mattermost';
-import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile, ExternalLink, Bot } from 'lucide-react';
+import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile, ExternalLink, Bot, Check, Loader2 } from 'lucide-react';
 
 interface Props {
   activeChannel?: MattermostChannel;
@@ -20,6 +20,10 @@ interface Props {
   onToggleViewMode: () => void;
   isAiDrawerOpen?: boolean;
   onToggleAiDrawer?: () => void;
+  isCurrentChannelUnread?: boolean;
+  currentChannelUnreadCount?: number;
+  onMarkCurrentChannelAsRead?: () => void;
+  isMarkingCurrentChannelRead?: boolean;
 }
 
 export const Header: React.FC<Props> = ({
@@ -40,6 +44,10 @@ export const Header: React.FC<Props> = ({
   onToggleViewMode,
   isAiDrawerOpen = false,
   onToggleAiDrawer,
+  isCurrentChannelUnread = false,
+  currentChannelUnreadCount = 0,
+  onMarkCurrentChannelAsRead,
+  isMarkingCurrentChannelRead = false,
 }) => {
   const getChannelIcon = (type?: string) => {
     switch (type) {
@@ -110,6 +118,26 @@ export const Header: React.FC<Props> = ({
               <span className="font-bold text-xs text-zinc-100 truncate">
                 {activeChannel.display_name || activeChannel.name}
               </span>
+            )}
+            {isCurrentChannelUnread && onMarkCurrentChannelAsRead && (
+              <button
+                onClick={onMarkCurrentChannelAsRead}
+                disabled={isMarkingCurrentChannelRead}
+                className="flex items-center space-x-1 text-[10px] sm:text-[11px] bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/80 px-1.5 sm:px-2 py-0.5 rounded font-bold shrink-0 transition-colors disabled:opacity-50 shadow-xs cursor-pointer"
+                title={`このチャンネルを既読にする（未読 ${currentChannelUnreadCount || 0} 件）`}
+              >
+                {isMarkingCurrentChannelRead ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                ) : (
+                  <Check className="w-3 h-3 text-emerald-400" />
+                )}
+                <span>既読</span>
+                {(currentChannelUnreadCount || 0) > 0 && (
+                  <span className="text-[9px] bg-emerald-800 text-white px-1 py-0.1 rounded-full font-mono">
+                    {currentChannelUnreadCount}
+                  </span>
+                )}
+              </button>
             )}
             {activeChannel.header && (
               <span className="hidden md:inline text-[10px] text-zinc-500 truncate max-w-[280px]">

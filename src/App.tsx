@@ -26,6 +26,7 @@ import {
   getUsersByIds,
   createPost,
   buildMattermostChannelUrl,
+  viewChannel,
 } from './services/mattermost';
 import { Header } from './components/Header';
 import { ChannelSidebar } from './components/ChannelSidebar';
@@ -515,6 +516,44 @@ export const App: React.FC = () => {
   };
 
   const activeChannel = channels.find((c) => c.id === activeChannelId);
+  const activeMember = activeChannelId ? channelMembers[activeChannelId] : undefined;
+  const isCurrentChannelUnread = useMemo(() => {
+    if (!activeChannel || !activeMember) return false;
+    return (
+      activeChannel.last_post_at > (activeMember.last_viewed_at || 0) &&
+      activeChannel.total_msg_count > (activeMember.msg_count || 0)
+    );
+  }, [activeChannel, activeMember]);
+
+  const currentChannelUnreadCount = useMemo(() => {
+    if (!isCurrentChannelUnread || !activeChannel || !activeMember) return 0;
+    return Math.max(1, activeChannel.total_msg_count - (activeMember.msg_count || 0));
+  }, [isCurrentChannelUnread, activeChannel, activeMember]);
+
+  const [isMarkingCurrentChannelRead, setIsMarkingCurrentChannelRead] = useState(false);
+
+  // 現在のアクティブチャンネルを既読化
+  const handleMarkCurrentChannelAsRead = useCallback(async () => {
+    if (!activeChannelId || !settings.serverUrl || !settings.token || isMarkingCurrentChannelRead) return;
+
+    setIsMarkingCurrentChannelRead(true);
+    try {
+      await viewChannel(
+        settings.serverUrl,
+        settings.token,
+        activeChannelId,
+        '',
+        settings.corsProxy
+      );
+      handleChannelMarkedAsRead(activeChannelId);
+    } catch (err: any) {
+      console.error('Failed to mark channel as read:', err);
+      alert(`既読化に失敗しました: ${err.message || 'エラーが発生しました'}`);
+    } finally {
+      setIsMarkingCurrentChannelRead(false);
+    }
+  }, [activeChannelId, settings.serverUrl, settings.token, settings.corsProxy, isMarkingCurrentChannelRead, handleChannelMarkedAsRead]);
+
   const activeChannelUrl = buildMattermostChannelUrl(
     settings.serverUrl,
     activeChannel,
@@ -543,6 +582,10 @@ export const App: React.FC = () => {
         onToggleViewMode={() => setViewMode((prev) => (prev === 'catchup' ? 'log' : 'catchup'))}
         isAiDrawerOpen={isAiDrawerOpen}
         onToggleAiDrawer={() => setIsAiDrawerOpen((prev) => !prev)}
+        isCurrentChannelUnread={isCurrentChannelUnread}
+        currentChannelUnreadCount={currentChannelUnreadCount}
+        onMarkCurrentChannelAsRead={handleMarkCurrentChannelAsRead}
+        isMarkingCurrentChannelRead={isMarkingCurrentChannelRead}
       />
 
       {/* Error alert banner */}
@@ -620,6 +663,10 @@ export const App: React.FC = () => {
             onOpenAiWithChannel={handleOpenAiForChannel}
             appliedDraft={appliedAiDraft}
             onClearAppliedDraft={() => setAppliedAiDraft(null)}
+            isUnread={isCurrentChannelUnread}
+            unreadCount={currentChannelUnreadCount}
+            onMarkAsRead={handleMarkCurrentChannelAsRead}
+            isMarkingRead={isMarkingCurrentChannelRead}
           />
         )}
       </div>

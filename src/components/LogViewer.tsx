@@ -22,6 +22,7 @@ import {
   Send,
   Reply,
   Bot,
+  Check,
 } from 'lucide-react';
 
 interface Props {
@@ -46,6 +47,10 @@ interface Props {
   onOpenAiWithChannel?: () => void;
   appliedDraft?: string | null;
   onClearAppliedDraft?: () => void;
+  isUnread?: boolean;
+  unreadCount?: number;
+  onMarkAsRead?: () => void;
+  isMarkingRead?: boolean;
 }
 
 export const LogViewer: React.FC<Props> = ({
@@ -70,6 +75,10 @@ export const LogViewer: React.FC<Props> = ({
   onOpenAiWithChannel,
   appliedDraft,
   onClearAppliedDraft,
+  isUnread = false,
+  unreadCount = 0,
+  onMarkAsRead,
+  isMarkingRead = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -556,6 +565,35 @@ export const LogViewer: React.FC<Props> = ({
             </span>
           )}
 
+          {onMarkAsRead && (
+            <button
+              onClick={onMarkAsRead}
+              disabled={isMarkingRead}
+              className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] border font-sans transition-colors shrink-0 disabled:opacity-50 cursor-pointer ${
+                isUnread
+                  ? 'bg-emerald-950/90 hover:bg-emerald-900 border-emerald-600/80 text-emerald-300 font-bold shadow-xs'
+                  : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700/80 text-zinc-400 hover:text-zinc-200'
+              }`}
+              title={
+                isUnread
+                  ? `このチャンネルを既読にする（未読 ${unreadCount || 0} 件）`
+                  : 'このチャンネルを既読にする（既読状態を更新）'
+              }
+            >
+              {isMarkingRead ? (
+                <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+              ) : (
+                <Check className={`w-3 h-3 ${isUnread ? 'text-emerald-400' : 'text-zinc-500'}`} />
+              )}
+              <span>既読</span>
+              {isUnread && (unreadCount || 0) > 0 && (
+                <span className="text-[9px] bg-emerald-800 text-white px-1 py-0.1 rounded-full font-mono">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+          )}
+
           {onOpenAiWithChannel && (
             <button
               onClick={onOpenAiWithChannel}
@@ -834,11 +872,45 @@ export const LogViewer: React.FC<Props> = ({
         })}
       </div>
 
+      {/* チャンネル未読フッターバー（未読がある時、読み終えた位置で既読化できるバー） */}
+      {isUnread && onMarkAsRead && (
+        <div className="shrink-0 px-3 py-1.5 bg-zinc-900/95 border-t border-zinc-800/80 flex items-center justify-between text-xs select-none">
+          <div className="flex items-center space-x-1.5 text-zinc-400 text-[11px]">
+            <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>
+              ここまで読み終えたら既読にできます
+              {(unreadCount || 0) > 0 ? ` (未読 ${unreadCount} 件)` : ''}
+            </span>
+          </div>
+          <button
+            onClick={onMarkAsRead}
+            disabled={isMarkingRead}
+            className="flex items-center space-x-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-2.5 py-1 rounded shadow shadow-emerald-950 transition-colors disabled:opacity-50 cursor-pointer"
+            title="このチャンネルを既読にする"
+          >
+            {isMarkingRead ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Check className="w-3.5 h-3.5" />
+            )}
+            <span>このチャンネルを既読にする</span>
+          </button>
+        </div>
+      )}
+
       {/* Floating Scroll to Bottom Button */}
       {showScrollBottom && (
         <button
           onClick={() => scrollToBottom(true)}
-          className={`absolute ${onSendPost ? 'bottom-16' : 'bottom-3'} right-3 p-2 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-full shadow-lg border border-emerald-400/30 transition-all flex items-center justify-center backdrop-blur-xs select-none z-10`}
+          className={`absolute ${
+            isUnread && onMarkAsRead
+              ? onSendPost
+                ? 'bottom-28'
+                : 'bottom-14'
+              : onSendPost
+              ? 'bottom-16'
+              : 'bottom-3'
+          } right-3 p-2 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-full shadow-lg border border-emerald-400/30 transition-all flex items-center justify-center backdrop-blur-xs select-none z-10`}
           title="最新のログへ移動"
         >
           <ArrowDown className="w-4 h-4" />
