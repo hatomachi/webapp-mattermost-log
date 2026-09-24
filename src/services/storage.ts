@@ -43,6 +43,28 @@ export const loadSettings = (): AppSettings => {
       } catch {}
     }
 
+    // URLクエリパラメータ (?ai_token=xxxx や ?ai_hub=xxxx) による自動セット
+    if (typeof window !== 'undefined') {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const urlAiToken = params.get('ai_token') || params.get('ai_key');
+        const urlAiHub = params.get('ai_hub');
+        let hasUrlChange = false;
+
+        if (urlAiToken && urlAiToken.trim()) {
+          settings.aiToken = urlAiToken.trim();
+          hasUrlChange = true;
+        }
+        if (urlAiHub && urlAiHub.trim()) {
+          settings.aiHubUrl = urlAiHub.trim();
+          hasUrlChange = true;
+        }
+        if (hasUrlChange) {
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        }
+      } catch {}
+    }
+
     return settings;
   } catch (e) {
     console.error('Failed to load settings:', e);

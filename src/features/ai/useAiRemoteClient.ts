@@ -171,7 +171,11 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
   const connectHttp = useCallback(() => {
     cleanup();
     const { hubUrl, authToken } = settings;
-    if (!hubUrl) return;
+    if (!hubUrl || !authToken) {
+      setIsHubConnected(false);
+      setIsAgentConnected(false);
+      return;
+    }
 
     try {
       const { eventsUrl, messageUrl } = deriveHttpUrls(hubUrl, authToken);
@@ -212,7 +216,11 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
   const connectWs = useCallback(() => {
     cleanup();
     const { hubUrl, authToken, transportMode = 'auto' } = settings;
-    if (!hubUrl) return;
+    if (!hubUrl || !authToken) {
+      setIsHubConnected(false);
+      setIsAgentConnected(false);
+      return;
+    }
 
     try {
       const urlObj = new URL(hubUrl);

@@ -34,6 +34,15 @@ export const SettingsModal: React.FC<Props> = ({
   const handleTestAiConnection = async () => {
     const hubUrl = (formData.aiHubUrl || 'ws://localhost:8090/ws/client').trim();
     const token = (formData.aiToken || '').trim();
+
+    if (!token) {
+      setAiTestResult({
+        success: false,
+        message: '認証トークン (Auth Key) が未入力です。社内PCで start-agent 起動時に表示された UUID を入力してください。',
+      });
+      return;
+    }
+
     setIsAiTesting(true);
     setAiTestResult(null);
 
@@ -556,18 +565,22 @@ export const SettingsModal: React.FC<Props> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] text-zinc-400 mb-1">
-                Session Token (UUID / 認証キー)
+              <label className="block text-[11px] text-zinc-300 font-semibold mb-1 flex items-center space-x-1">
+                <Key className="w-3 h-3 text-emerald-400" />
+                <span>認証トークン / Auth Key (Session Token)</span>
               </label>
               <input
                 type="text"
-                placeholder="PC側 start-agent 起動時に表示されるトークン"
+                placeholder="例: 550e8400-e29b-41d4-a716-446655440000"
                 value={formData.aiToken || ''}
                 onChange={(e) =>
                   setFormData({ ...formData, aiToken: e.target.value })
                 }
-                className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-500 text-xs font-mono"
+                className="w-full bg-zinc-950 border border-zinc-700/80 rounded px-2.5 py-1.5 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-emerald-500 text-xs font-mono"
               />
+              <p className="text-[10px] text-zinc-500 mt-0.5">
+                社内PCで start-agent を起動した際に表示される UUID (Session Token) を入力してください
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-2">

@@ -17,6 +17,7 @@ import {
   CornerDownLeft,
   Settings,
   Plus,
+  Key,
 } from 'lucide-react';
 import { AppSettings } from '../../types/mattermost';
 import {
@@ -371,8 +372,25 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Connection Notice Banner if Agent is Disconnected */}
-      {!isAgentConnected && (
+      {/* Connection Notice Banner */}
+      {!settings.aiToken ? (
+        <div className="bg-amber-950/90 border-b border-amber-800 px-3 py-2 text-amber-200 text-xs flex items-center justify-between shrink-0">
+          <div className="flex items-center space-x-1.5 min-w-0">
+            <Key className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+            <span className="text-[11px] font-semibold truncate">
+              認証キー (Auth Key / Token) が未設定です
+            </span>
+          </div>
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="text-[10px] bg-amber-900/80 hover:bg-amber-800 text-amber-100 border border-amber-700/80 px-2 py-0.5 rounded shrink-0 ml-2 font-sans transition-colors font-bold"
+            >
+              設定を開く
+            </button>
+          )}
+        </div>
+      ) : !isAgentConnected ? (
         <div className="bg-amber-950/70 border-b border-amber-800/70 px-3 py-2 text-amber-200 text-xs flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-1.5 min-w-0">
             <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
@@ -391,7 +409,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
             </button>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3 font-sans text-xs">
