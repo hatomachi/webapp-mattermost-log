@@ -16,6 +16,7 @@ where claude >nul 2>nul
 if errorlevel 1 goto :no_claude
 
 :start_server
+set NODE_NO_WARNINGS=1
 echo エージェントサーバーを起動します (ポート 3456)...
 echo 終了するには Ctrl + C を押してください。
 echo.

@@ -400,8 +400,22 @@ const server = http.createServer(async (req, res) => {
         } catch {}
       });
 
+      // Prepare executable and arguments for spawn.
+      // On Windows, if invoking a .cmd or .bat script, launch via cmd.exe directly
+      // instead of { shell: true }, which triggers Node.js DEP0190 security error.
+      let spawnExecutable = claudeInfo.binPath;
+      let spawnArgs = args;
+
+      if (isWindows) {
+        const lower = claudeInfo.binPath.toLowerCase();
+        if (lower.endsWith('.cmd') || lower.endsWith('.bat') || !lower.endsWith('.exe')) {
+          spawnExecutable = process.env.ComSpec || 'cmd.exe';
+          spawnArgs = ['/d', '/s', '/c', claudeInfo.binPath, ...args];
+        }
+      }
+
       try {
-        child = spawn(claudeInfo.binPath, args, {
+        child = spawn(spawnExecutable, spawnArgs, {
           cwd: workspaceDir,
           env: {
             ...process.env,
@@ -412,7 +426,6 @@ const server = http.createServer(async (req, res) => {
             LANG: 'ja_JP.UTF-8',
           },
           stdio: ['pipe', 'pipe', 'pipe'],
-          shell: isWindows,
           windowsHide: true,
         });
 
