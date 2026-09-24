@@ -356,9 +356,10 @@ const server = http.createServer(async (req, res) => {
       console.log(`[LocalAgent] [${appId}/${topicId}] Starting Claude (${isResume ? 'resume' : 'new'} session: ${sessionId})`);
 
       // Build args for claude CLI
+      // Note: Passing prompt via stdin instead of argv avoids cmd.exe parsing errors
+      // (such as "was unexpected at this time") and 8191-character command line limits.
       const args = [
         '-p',
-        prompt,
         '--output-format',
         'stream-json',
         '--verbose',
@@ -410,10 +411,13 @@ const server = http.createServer(async (req, res) => {
             PYTHONIOENCODING: 'utf-8',
             LANG: 'ja_JP.UTF-8',
           },
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
           shell: isWindows,
           windowsHide: true,
         });
+
+        // Write prompt safely into stdin
+        child.stdin.end(prompt);
       } catch (err) {
         sendSSE({
           type: 'error',
