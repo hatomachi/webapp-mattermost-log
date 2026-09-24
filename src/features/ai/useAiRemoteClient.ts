@@ -21,8 +21,15 @@ export interface InboundHubMessage {
 
 export function deriveHttpUrls(hubWsUrl: string, authToken: string) {
   try {
-    const parsed = new URL(hubWsUrl);
-    parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
+    let rawUrl = hubWsUrl.trim();
+    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://') && !rawUrl.startsWith('ws://') && !rawUrl.startsWith('wss://')) {
+      const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+      rawUrl = `${isHttps ? 'https:' : 'http:'}//${rawUrl}`;
+    }
+
+    const parsed = new URL(rawUrl);
+    // wss: or https: -> https:, ws: or http: -> http:
+    parsed.protocol = (parsed.protocol === 'wss:' || parsed.protocol === 'https:') ? 'https:' : 'http:';
 
     let basePath = parsed.pathname;
     if (basePath.endsWith('/ws/client')) {
@@ -52,6 +59,31 @@ export function deriveHttpUrls(hubWsUrl: string, authToken: string) {
       eventsUrl: `${base}/events${tokenQuery}`,
       messageUrl: `${base}/message${tokenQuery}`,
     };
+  }
+}
+
+export function deriveWsUrl(hubUrl: string, authToken: string): string {
+  try {
+    let wsUrlStr = hubUrl.trim();
+    if (wsUrlStr.startsWith('http://')) {
+      wsUrlStr = 'ws://' + wsUrlStr.slice('http://'.length);
+    } else if (wsUrlStr.startsWith('https://')) {
+      wsUrlStr = 'wss://' + wsUrlStr.slice('https://'.length);
+    } else if (!wsUrlStr.startsWith('ws://') && !wsUrlStr.startsWith('wss://')) {
+      const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+      wsUrlStr = `${isHttps ? 'wss:' : 'ws:'}//${wsUrlStr}`;
+    }
+
+    const parsed = new URL(wsUrlStr);
+    if (!parsed.pathname || parsed.pathname === '/') {
+      parsed.pathname = '/ws/client';
+    }
+    if (authToken) {
+      parsed.searchParams.set('token', authToken);
+    }
+    return parsed.toString();
+  } catch {
+    return hubUrl;
   }
 }
 
@@ -223,13 +255,9 @@ export function useAiRemoteClient(options: UseAiRemoteClientOptions) {
     }
 
     try {
-      const urlObj = new URL(hubUrl);
-      if (authToken) {
-        urlObj.searchParams.set('token', authToken);
-      }
-
-      console.log('[AiRemoteClient] Connecting via WebSocket:', urlObj.toString());
-      const ws = new WebSocket(urlObj.toString());
+      const wsUrl = deriveWsUrl(hubUrl, authToken);
+      console.log('[AiRemoteClient] Connecting via WebSocket:', wsUrl);
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       if (transportMode === 'auto') {

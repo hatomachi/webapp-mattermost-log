@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AppSettings, MattermostTeam } from '../types/mattermost';
 import { getMe, getMyTeams } from '../services/mattermost';
 import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink, Bot, Cpu } from 'lucide-react';
-import { deriveHttpUrls } from '../features/ai/useAiRemoteClient';
+import { deriveHttpUrls, deriveWsUrl } from '../features/ai/useAiRemoteClient';
 
 interface Props {
   isOpen: boolean;
@@ -46,34 +46,63 @@ export const SettingsModal: React.FC<Props> = ({
     setIsAiTesting(true);
     setAiTestResult(null);
 
-    try {
-      const { messageUrl } = deriveHttpUrls(hubUrl, token);
-      const parsed = new URL(messageUrl);
-      parsed.pathname = parsed.pathname.replace(/\/message\/?$/, '/health');
-      const healthUrl = parsed.toString();
+    const transportMode = formData.aiTransportMode || 'auto';
 
-      // 1. Hub の /health HTTP エンドポイントを試行
-      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
-      if (res.ok) {
-        const data = await res.json();
-        setAiTestResult({
-          success: true,
-          message: `Relay Hub 疎通成功: Agent=${data.agentConnected ? `✅ 接続中 (${data.agentHostname || 'OK'})` : '⚠️ 未接続 (PC側で start-agent を起動してください)'}`,
+    // 1. HTTP メッセージエンドポイント (POST .../message?token=...) を試行 (社内プロキシ・スマホで確実に通る)
+    if (transportMode === 'http' || transportMode === 'auto') {
+      try {
+        const { messageUrl } = deriveHttpUrls(hubUrl, token);
+        const postRes = await fetch(messageUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'get_status' }),
+          signal: AbortSignal.timeout(4000),
         });
-        return;
+
+        if (postRes.ok) {
+          setAiTestResult({
+            success: true,
+            message: 'HTTP (SSE+POST) 接続成功: ✅ 社内PC Bridge Agent 接続中',
+          });
+          return;
+        }
+
+        if (postRes.status === 503) {
+          setAiTestResult({
+            success: true,
+            message: 'HTTP (SSE+POST) 疎通成功: ⚠️ Relay Hub は到達可能ですが、PC側の start-agent が起動していません',
+          });
+          return;
+        }
+
+        if (postRes.status === 401) {
+          setAiTestResult({
+            success: false,
+            message: '認証エラー (HTTP 401): 認証トークン (Auth Key) が正しくありません。PC側のログを確認してください',
+          });
+          return;
+        }
+      } catch (httpErr: any) {
+        console.warn('HTTP POST test failed:', httpErr);
+        if (transportMode === 'http') {
+          setAiTestResult({
+            success: false,
+            message: `HTTP (SSE+POST) 接続失敗: ${httpErr.message || 'Hub にアクセスできません'}`,
+          });
+          return;
+        }
       }
-    } catch {}
+    }
 
     // 2. WebSocket での直接疎通確認
     try {
-      const wsUrl = new URL(hubUrl);
-      if (token) wsUrl.searchParams.set('token', token);
-      const testWs = new WebSocket(wsUrl.toString());
+      const wsUrlStr = deriveWsUrl(hubUrl, token);
+      const testWs = new WebSocket(wsUrlStr);
 
       const wsPromise = new Promise<{ success: boolean; message: string }>((resolve, reject) => {
         const timer = setTimeout(() => {
           testWs.close();
-          reject(new Error('WebSocket 接続タイムアウト (3秒)'));
+          reject(new Error('WebSocket 接続タイムアウト (3秒) - 社内プロキシ環境では通信方式を「HTTP」に設定してください'));
         }, 3000);
 
         testWs.onopen = () => {
@@ -81,13 +110,13 @@ export const SettingsModal: React.FC<Props> = ({
           testWs.close();
           resolve({
             success: true,
-            message: 'Relay Hub WebSocket 接続成功 (通信可能)',
+            message: 'WebSocket 接続成功: Relay Hub と通信可能',
           });
         };
 
         testWs.onerror = () => {
           clearTimeout(timer);
-          reject(new Error('WebSocket 接続失敗'));
+          reject(new Error('WebSocket 接続失敗: 社内プロキシで遮断されている可能性があります。通信方式を「HTTP (SSE+POST)」に切り替えてください'));
         };
       });
 
@@ -614,6 +643,27 @@ export const SettingsModal: React.FC<Props> = ({
                   className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-500 text-xs font-mono"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-300 font-semibold mb-1 flex items-center justify-between">
+                <span>通信方式 (Transport Mode)</span>
+                <span className="text-[10px] text-emerald-400 font-normal">社内プロキシ・スマホ対応</span>
+              </label>
+              <select
+                value={formData.aiTransportMode || 'auto'}
+                onChange={(e) =>
+                  setFormData({ ...formData, aiTransportMode: e.target.value as 'auto' | 'http' | 'ws' })
+                }
+                className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500"
+              >
+                <option value="auto">自動 (WebSocket 優先 / 遮断時 HTTP フォールバック)</option>
+                <option value="http">HTTP (SSE + POST) ※社内プロキシ・スマホ推奨</option>
+                <option value="ws">WebSocket (常時双方向)</option>
+              </select>
+              <p className="text-[10px] text-zinc-500 mt-0.5">
+                社内プロキシやZTNAでWebSocketが弾かれる環境では「HTTP (SSE + POST)」を選択してください
+              </p>
             </div>
 
             <p className="text-[10px] text-zinc-500">
