@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings, MattermostTeam } from '../types/mattermost';
 import { getMe, getMyTeams } from '../services/mattermost';
-import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink, Bot } from 'lucide-react';
+import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink, Bot, Cpu } from 'lucide-react';
+import { deriveHttpUrls } from '../features/ai/useAiRemoteClient';
 
 interface Props {
   isOpen: boolean;
@@ -31,27 +32,62 @@ export const SettingsModal: React.FC<Props> = ({
   } | null>(null);
 
   const handleTestAiConnection = async () => {
-    const url = (formData.aiAgentUrl || 'http://localhost:3456').replace(/\/+$/, '');
+    const hubUrl = (formData.aiHubUrl || 'ws://localhost:8090/ws/client').trim();
+    const token = (formData.aiToken || '').trim();
     setIsAiTesting(true);
     setAiTestResult(null);
 
     try {
-      const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const { messageUrl } = deriveHttpUrls(hubUrl, token);
+      const parsed = new URL(messageUrl);
+      parsed.pathname = parsed.pathname.replace(/\/message\/?$/, '/health');
+      const healthUrl = parsed.toString();
+
+      // 1. Hub の /health HTTP エンドポイントを試行
+      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        const data = await res.json();
+        setAiTestResult({
+          success: true,
+          message: `Relay Hub 疎通成功: Agent=${data.agentConnected ? `✅ 接続中 (${data.agentHostname || 'OK'})` : '⚠️ 未接続 (PC側で start-agent を起動してください)'}`,
+        });
+        return;
       }
-      const data = await res.json();
-      const claudeMsg = data.claude?.found
-        ? `Claude CLI 検出済 (${data.claude.source})`
-        : 'Claude CLI が見つかりません (PATHまたはCLAUDE_BIN環境変数をご確認ください)';
-      setAiTestResult({
-        success: true,
-        message: `接続成功: ${data.agent} v${data.version || '0.1.0'} / ${claudeMsg}`,
+    } catch {}
+
+    // 2. WebSocket での直接疎通確認
+    try {
+      const wsUrl = new URL(hubUrl);
+      if (token) wsUrl.searchParams.set('token', token);
+      const testWs = new WebSocket(wsUrl.toString());
+
+      const wsPromise = new Promise<{ success: boolean; message: string }>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          testWs.close();
+          reject(new Error('WebSocket 接続タイムアウト (3秒)'));
+        }, 3000);
+
+        testWs.onopen = () => {
+          clearTimeout(timer);
+          testWs.close();
+          resolve({
+            success: true,
+            message: 'Relay Hub WebSocket 接続成功 (通信可能)',
+          });
+        };
+
+        testWs.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error('WebSocket 接続失敗'));
+        };
       });
+
+      const res = await wsPromise;
+      setAiTestResult(res);
     } catch (err: any) {
       setAiTestResult({
         success: false,
-        message: `接続失敗: ${err.message || 'エージェントサーバーに接続できません (npm run agent で起動してください)'}`,
+        message: `接続失敗: ${err.message || 'Relay Hub に接続できません。URLとTokenをご確認ください'}`,
       });
     } finally {
       setIsAiTesting(false);
@@ -486,24 +522,24 @@ export const SettingsModal: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Local AI Agent Settings */}
+          {/* AI Remote Hub Settings */}
           <div className="border-t border-zinc-800 pt-3 space-y-2.5">
             <div className="flex items-center space-x-1.5 text-zinc-300 font-semibold">
               <Bot className="w-3.5 h-3.5 text-emerald-400" />
-              <span>汎用ローカルAIエージェント設定</span>
+              <span>AI Remote 連携 (社内PC Bridge Agent 接続)</span>
             </div>
 
             <div>
               <label className="block text-[11px] text-zinc-400 mb-1">
-                エージェントサーバーURL
+                Relay Hub URL (WSS / WS)
               </label>
               <div className="flex space-x-2">
                 <input
                   type="text"
-                  placeholder="http://localhost:3456"
-                  value={formData.aiAgentUrl || ''}
+                  placeholder="ws://localhost:8090/ws/client または wss://..."
+                  value={formData.aiHubUrl || ''}
                   onChange={(e) =>
-                    setFormData({ ...formData, aiAgentUrl: e.target.value })
+                    setFormData({ ...formData, aiHubUrl: e.target.value })
                   }
                   className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-500 text-xs font-mono"
                 />
@@ -517,10 +553,59 @@ export const SettingsModal: React.FC<Props> = ({
                   <span>テスト</span>
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-500 mt-1">
-                Windows は <code>start-agent.bat</code>、Mac/Linux は <code>npm run agent</code> でエージェントを常駐させると、Claude Code CLI と壁打ちできます
-              </p>
             </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-400 mb-1">
+                Session Token (UUID / 認証キー)
+              </label>
+              <input
+                type="text"
+                placeholder="PC側 start-agent 起動時に表示されるトークン"
+                value={formData.aiToken || ''}
+                onChange={(e) =>
+                  setFormData({ ...formData, aiToken: e.target.value })
+                }
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-500 text-xs font-mono"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">
+                  AI Engine
+                </label>
+                <select
+                  value={formData.aiEngine || 'claude'}
+                  onChange={(e) =>
+                    setFormData({ ...formData, aiEngine: e.target.value as 'claude' | 'copilot' })
+                  }
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none"
+                >
+                  <option value="claude">Claude Code (標準)</option>
+                  <option value="copilot">GitHub Copilot CLI</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">
+                  Model
+                </label>
+                <input
+                  type="text"
+                  placeholder="claude-opus-4-7"
+                  value={formData.aiModel || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, aiModel: e.target.value })
+                  }
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-zinc-500 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <p className="text-[10px] text-zinc-500">
+              社内PCで <code>webapp-ai-remote</code> の <code>start-agent</code> を起動しておくと、会社スマホ(PWA)から電車内でも社内PCのClaude/Copilotと対話できます
+            </p>
 
             {aiTestResult && (
               <div

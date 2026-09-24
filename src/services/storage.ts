@@ -18,15 +18,32 @@ export const DEFAULT_SETTINGS: AppSettings = {
   channelSortOrder: 'recent',
   collapseNewlines: false,
   aiAgentUrl: 'http://localhost:3456',
+  aiHubUrl: 'ws://localhost:8090/ws/client',
+  aiToken: '',
+  aiEngine: 'claude',
+  aiModel: 'claude-opus-4-7',
+  aiTransportMode: 'auto',
 };
-
 
 export const loadSettings = (): AppSettings => {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    const parsed = raw ? JSON.parse(raw) : {};
+    const settings = { ...DEFAULT_SETTINGS, ...parsed };
+
+    // webapp-ai-remote (ai_remote_settings_v1) が同一オリジン/ブラウザに存在する場合は自動引き継ぎ
+    if (!settings.aiToken) {
+      try {
+        const remoteRaw = localStorage.getItem('ai_remote_settings_v1');
+        if (remoteRaw) {
+          const remoteParsed = JSON.parse(remoteRaw);
+          if (remoteParsed.hubUrl && !parsed.aiHubUrl) settings.aiHubUrl = remoteParsed.hubUrl;
+          if (remoteParsed.authToken) settings.aiToken = remoteParsed.authToken;
+        }
+      } catch {}
+    }
+
+    return settings;
   } catch (e) {
     console.error('Failed to load settings:', e);
     return DEFAULT_SETTINGS;

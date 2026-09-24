@@ -125,6 +125,11 @@ export interface AppSettings {
   channelSortOrder: ChannelSortOrder;
   collapseNewlines: boolean;
   aiAgentUrl?: string;
+  aiHubUrl?: string;
+  aiToken?: string;
+  aiEngine?: 'claude' | 'copilot';
+  aiModel?: string;
+  aiTransportMode?: 'auto' | 'ws' | 'http';
 }
 
 export interface ReplyTarget {

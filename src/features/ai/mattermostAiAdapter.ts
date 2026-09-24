@@ -7,6 +7,7 @@
 
 import { MattermostPost, MattermostUser, MattermostChannel } from '../../types/mattermost';
 import { formatUserDisplayName, formatFileSize, getPostReactions, getGroupedReactions } from '../../services/mattermost';
+import { ContextAttachment } from './aiRemoteTypes';
 
 export interface ContextFile {
   name: string;
@@ -224,3 +225,147 @@ export function formatThreadLogsToMarkdown(params: {
     previewSnippet: md.slice(0, 300) + (md.length > 300 ? '...' : ''),
   };
 }
+
+/**
+ * Format channel posts into a ContextAttachment object
+ */
+export function formatChannelLogsToAttachment(params: {
+  channel?: MattermostChannel;
+  posts: MattermostPost[];
+  userCache: Record<string, MattermostUser>;
+  threadPosts?: Record<string, MattermostPost[]>;
+  maxPosts?: number;
+}): ContextAttachment {
+  const { channel, posts, userCache, threadPosts, maxPosts = 60 } = params;
+  const channelDisplayName = channel?.display_name || channel?.name || 'チャンネル';
+  const file = formatChannelLogsToMarkdown({ channel, posts, userCache, threadPosts, maxPosts });
+  const sorted = [...posts].slice(-maxPosts);
+
+  return {
+    id: `channel_${channel?.id || 'curr'}_${Date.now()}`,
+    type: 'channel_log',
+    title: `#${channelDisplayName} ログ`,
+    badge: `${sorted.length}件`,
+    subtitle: channel?.purpose || '直近のチャンネル会話',
+    contentMarkdown: file.content,
+  };
+}
+
+/**
+ * Format a thread into a ContextAttachment object
+ */
+export function formatThreadLogsToAttachment(params: {
+  channel?: MattermostChannel;
+  rootPost: MattermostPost;
+  replies: MattermostPost[];
+  userCache: Record<string, MattermostUser>;
+}): ContextAttachment {
+  const { channel, rootPost, replies, userCache } = params;
+  const channelDisplayName = channel?.display_name || channel?.name || 'チャンネル';
+  const file = formatThreadLogsToMarkdown({ channel, rootPost, replies, userCache });
+  const user = userCache[rootPost.user_id];
+  const authorName = user ? formatUserDisplayName(user) : `@${rootPost.user_id || 'unknown'}`;
+  const preview = (rootPost.message || '').replace(/\s+/g, ' ').slice(0, 20);
+
+  return {
+    id: `thread_${rootPost.id}`,
+    type: 'thread_log',
+    title: `スレッド: @${authorName}「${preview}...」`,
+    badge: `返信${replies.length}件`,
+    subtitle: `#${channelDisplayName} 内のスレッド`,
+    contentMarkdown: file.content,
+  };
+}
+
+/**
+ * Format unread channels digest into a ContextAttachment object
+ */
+export function formatUnreadDigestToAttachment(params: {
+  unreadItems: Array<{ channel: MattermostChannel; posts: MattermostPost[]; unreadCount: number }>;
+  userCache: Record<string, MattermostUser>;
+}): ContextAttachment {
+  const { unreadItems, userCache } = params;
+  let md = `# Mattermost 未読キャッチアップ ダイジェスト\n\n`;
+  md += `- 取得日時: ${formatFullTimestamp(Date.now())}\n`;
+  md += `- 未読チャンネル数: ${unreadItems.length}件\n\n`;
+  md += `---\n\n`;
+
+  let totalPosts = 0;
+  for (const item of unreadItems) {
+    const chName = item.channel.display_name || item.channel.name;
+    const teamName = item.channel.team_display_name || item.channel.team_name || '';
+    md += `## #${chName}${teamName ? ` (${teamName})` : ''} [未読: ${item.unreadCount}件]\n\n`;
+
+    const recentPosts = [...item.posts].sort((a, b) => a.create_at - b.create_at).slice(-15);
+    totalPosts += recentPosts.length;
+    for (const post of recentPosts) {
+      md += formatPostBlock(post, userCache);
+      md += '\n';
+    }
+    md += '\n---\n\n';
+  }
+
+  return {
+    id: `unread_digest_${Date.now()}`,
+    type: 'unread_digest',
+    title: `未読ダイジェスト`,
+    badge: `${unreadItems.length}ch / ${totalPosts}件`,
+    subtitle: `${unreadItems.length}チャンネルの最新ダイジェスト`,
+    contentMarkdown: md,
+  };
+}
+
+/**
+ * Format a single post into a ContextAttachment object
+ */
+export function formatSinglePostToAttachment(params: {
+  channel?: MattermostChannel;
+  post: MattermostPost;
+  userCache: Record<string, MattermostUser>;
+}): ContextAttachment {
+  const { channel, post, userCache } = params;
+  const channelName = channel?.display_name || channel?.name || 'channel';
+  const user = userCache[post.user_id];
+  const authorName = user ? formatUserDisplayName(user) : `@${post.user_id || 'unknown'}`;
+  const timeStr = formatFullTimestamp(post.create_at);
+
+  let md = `# Mattermost 投稿抜粋: #${channelName}\n\n`;
+  md += formatPostBlock(post, userCache);
+
+  const preview = (post.message || '').replace(/\s+/g, ' ').slice(0, 24);
+
+  return {
+    id: `post_${post.id}`,
+    type: 'single_post',
+    title: `@${authorName}:「${preview}...」`,
+    badge: `#${channelName}`,
+    subtitle: `${timeStr} の発言`,
+    contentMarkdown: md,
+  };
+}
+
+/**
+ * Compose full prompt with attached context attachments injected at the top
+ */
+export function composeFullPrompt(userPrompt: string, attachments?: ContextAttachment[]): string {
+  if (!attachments || attachments.length === 0) {
+    return userPrompt;
+  }
+
+  let prompt = `以下の Mattermost 会話ログ（添付コンテキスト）を読み込んで、ユーザーの質問や指示に答えてください。\n\n`;
+
+  for (const att of attachments) {
+    prompt += `========================================================\n`;
+    prompt += `📎 添付コンテキスト: ${att.title}${att.badge ? ` (${att.badge})` : ''}\n`;
+    prompt += `========================================================\n`;
+    prompt += att.contentMarkdown.trim() + '\n\n';
+  }
+
+  prompt += `========================================================\n`;
+  prompt += `【ユーザーの指示・質問】\n`;
+  prompt += `========================================================\n`;
+  prompt += userPrompt;
+
+  return prompt;
+}
+

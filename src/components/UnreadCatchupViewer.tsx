@@ -34,6 +34,7 @@ import {
   Loader2,
   AtSign,
   BookOpen,
+  Bot,
 } from 'lucide-react';
 
 interface Props {
@@ -55,6 +56,8 @@ interface Props {
   onRefreshUnreads: () => Promise<void>;
   teams?: MattermostTeam[];
   webUrl?: string;
+  onOpenAiWithUnreads?: (unreadItems: Array<{ channel: MattermostChannel; posts: MattermostPost[]; unreadCount: number }>) => void;
+  onOpenAiWithChannelPosts?: (channel: MattermostChannel, posts: MattermostPost[]) => void;
 }
 
 interface UnreadChannelItem {
@@ -95,6 +98,8 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   onRefreshUnreads,
   teams,
   webUrl,
+  onOpenAiWithUnreads,
+  onOpenAiWithChannelPosts,
 }) => {
   const [channelStates, setChannelStates] = useState<Record<string, ChannelCatchupState>>({});
   const [isInitializing, setIsInitializing] = useState(true);
@@ -560,6 +565,24 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
             <span className="hidden sm:inline">再検出</span>
           </button>
 
+          {onOpenAiWithUnreads && activeChannelList.length > 0 && (
+            <button
+              onClick={() => {
+                const items = activeChannelList.map((s) => ({
+                  channel: s.channel,
+                  posts: s.posts,
+                  unreadCount: s.unreadCount,
+                }));
+                onOpenAiWithUnreads(items);
+              }}
+              className="flex items-center space-x-1 text-[11px] bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/70 px-2.5 py-1 rounded transition-colors shadow-sm"
+              title="表示中の未読チャンネルをまとめてAIに要約・相談"
+            >
+              <Bot className="w-3.5 h-3.5 text-emerald-400" />
+              <span>AI未読まとめ</span>
+            </button>
+          )}
+
           {activeChannelList.length > 0 && (
             <button
               onClick={handleMarkAllAsRead}
@@ -659,6 +682,17 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                   </div>
 
                   <div className="flex items-center space-x-2 shrink-0">
+                    {onOpenAiWithChannelPosts && posts.length > 0 && (
+                      <button
+                        onClick={() => onOpenAiWithChannelPosts(channel, posts)}
+                        className="text-zinc-400 hover:text-emerald-300 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
+                        title="このチャンネルの未読をAIに添付して相談"
+                      >
+                        <Bot className="w-3 h-3 text-emerald-400" />
+                        <span className="hidden sm:inline">AI相談</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => onSelectChannel(channel)}
                       className="text-zinc-400 hover:text-zinc-200 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"

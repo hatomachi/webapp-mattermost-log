@@ -33,12 +33,14 @@ import { ChannelSidebar } from './components/ChannelSidebar';
 import { LogViewer } from './components/LogViewer';
 import { UnreadCatchupViewer } from './components/UnreadCatchupViewer';
 import { SettingsModal } from './components/SettingsModal';
-import { GenericAiChatDrawer } from './components/ai/GenericAiChatDrawer';
+import { AiRemoteChatDrawer } from './components/ai/AiRemoteChatDrawer';
 import {
-  formatChannelLogsToMarkdown,
-  formatThreadLogsToMarkdown,
-  ContextFile,
+  formatChannelLogsToAttachment,
+  formatThreadLogsToAttachment,
+  formatUnreadDigestToAttachment,
+  formatSinglePostToAttachment,
 } from './features/ai/mattermostAiAdapter';
+import { ContextAttachment } from './features/ai/aiRemoteTypes';
 
 export const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
@@ -65,9 +67,12 @@ export const App: React.FC = () => {
   // AI壁打ち用ステート
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [aiContextTarget, setAiContextTarget] = useState<{
-    type: 'channel' | 'thread';
+    type: 'channel' | 'thread' | 'unread' | 'post';
     rootPost?: MattermostPost;
+    post?: MattermostPost;
+    unreadItems?: Array<{ channel: MattermostChannel; posts: MattermostPost[]; unreadCount: number }>;
   }>({ type: 'channel' });
+  const [activeAiAttachment, setActiveAiAttachment] = useState<ContextAttachment | null>(null);
   const [appliedAiDraft, setAppliedAiDraft] = useState<string | null>(null);
 
   const isConnected = Boolean(settings.serverUrl && settings.token);
@@ -452,32 +457,23 @@ export const App: React.FC = () => {
   };
 
   // AIトピックID（ワークスペース分離キー: チャンネルID または スレッドID）
-  const aiTopicId = useMemo(() => {
-    if (aiContextTarget.type === 'thread' && aiContextTarget.rootPost) {
-      return `thread_${aiContextTarget.rootPost.id}`;
+  // 現在の画面状態に応じたコンテキスト添付（Attachment）を動的に生成
+  const getCurrentContextAttachment = useCallback((): ContextAttachment | null => {
+    // 1. 未読ビュー時、または未読コンテキスト時
+    if (aiContextTarget.type === 'unread' && aiContextTarget.unreadItems && aiContextTarget.unreadItems.length > 0) {
+      return formatUnreadDigestToAttachment({
+        unreadItems: aiContextTarget.unreadItems,
+        userCache,
+      });
     }
-    return activeChannelId ? `channel_${activeChannelId}` : 'general';
-  }, [aiContextTarget, activeChannelId]);
 
-  // AIトピック表示名
-  const aiTopicTitle = useMemo(() => {
     const ch = channels.find((c) => c.id === activeChannelId);
-    const chName = ch ? `#${ch.display_name || ch.name}` : '未選択';
-    if (aiContextTarget.type === 'thread' && aiContextTarget.rootPost) {
-      const user = userCache[aiContextTarget.rootPost.user_id];
-      const author = user ? user.nickname || user.username : 'ユーザー';
-      return `${chName} > スレッド: @${author}`;
-    }
-    return chName;
-  }, [aiContextTarget, channels, activeChannelId, userCache]);
 
-  // 整形済みコンテキストファイル（Markdown）
-  const aiContextFile = useMemo<ContextFile | null>(() => {
-    const ch = channels.find((c) => c.id === activeChannelId);
+    // 2. スレッド指定時
     if (aiContextTarget.type === 'thread' && aiContextTarget.rootPost) {
       const root = aiContextTarget.rootPost;
       const replies = threadPosts[root.id] || [];
-      return formatThreadLogsToMarkdown({
+      return formatThreadLogsToAttachment({
         channel: ch,
         rootPost: root,
         replies,
@@ -485,8 +481,18 @@ export const App: React.FC = () => {
       });
     }
 
+    // 3. 単一投稿指定時
+    if (aiContextTarget.type === 'post' && aiContextTarget.post) {
+      return formatSinglePostToAttachment({
+        channel: ch,
+        post: aiContextTarget.post,
+        userCache,
+      });
+    }
+
+    // 4. 通常のチャンネルログ表示時
     if (posts.length > 0) {
-      return formatChannelLogsToMarkdown({
+      return formatChannelLogsToAttachment({
         channel: ch,
         posts,
         userCache,
@@ -498,18 +504,83 @@ export const App: React.FC = () => {
     return null;
   }, [aiContextTarget, channels, activeChannelId, posts, userCache, threadPosts]);
 
-  const handleOpenAiForChannel = () => {
-    setAiContextTarget({ type: 'channel' });
-    setIsAiDrawerOpen(true);
-  };
+  // AIトピック表示名
+  const aiTopicTitle = useMemo(() => {
+    if (aiContextTarget.type === 'unread') {
+      const count = aiContextTarget.unreadItems?.length || 0;
+      return `未読キャッチアップ (${count}チャンネル)`;
+    }
+    const ch = channels.find((c) => c.id === activeChannelId);
+    const chName = ch ? `#${ch.display_name || ch.name}` : '未選択';
+    if (aiContextTarget.type === 'thread' && aiContextTarget.rootPost) {
+      const user = userCache[aiContextTarget.rootPost.user_id];
+      const author = user ? user.nickname || user.username : 'ユーザー';
+      return `${chName} > スレッド: @${author}`;
+    }
+    if (aiContextTarget.type === 'post' && aiContextTarget.post) {
+      const user = userCache[aiContextTarget.post.user_id];
+      const author = user ? user.nickname || user.username : 'ユーザー';
+      return `${chName} > @${author}の発言`;
+    }
+    return chName;
+  }, [aiContextTarget, channels, activeChannelId, userCache]);
 
-  const handleOpenAiForThread = (rootPost: MattermostPost) => {
+  const handleOpenAiForChannel = useCallback(() => {
+    setAiContextTarget({ type: 'channel' });
+    const ch = channels.find((c) => c.id === activeChannelId);
+    if (posts.length > 0) {
+      const att = formatChannelLogsToAttachment({
+        channel: ch,
+        posts,
+        userCache,
+        threadPosts,
+        maxPosts: 80,
+      });
+      setActiveAiAttachment(att);
+    } else {
+      setActiveAiAttachment(null);
+    }
+    setIsAiDrawerOpen(true);
+  }, [channels, activeChannelId, posts, userCache, threadPosts]);
+
+  const handleOpenAiForThread = useCallback((rootPost: MattermostPost) => {
     if (!threadPosts[rootPost.id] && !loadingThreads[rootPost.id]) {
       handleFetchThread(rootPost.id);
     }
     setAiContextTarget({ type: 'thread', rootPost });
+    const ch = channels.find((c) => c.id === activeChannelId);
+    const replies = threadPosts[rootPost.id] || [];
+    const att = formatThreadLogsToAttachment({
+      channel: ch,
+      rootPost,
+      replies,
+      userCache,
+    });
+    setActiveAiAttachment(att);
     setIsAiDrawerOpen(true);
-  };
+  }, [channels, activeChannelId, threadPosts, loadingThreads, userCache, handleFetchThread]);
+
+  const handleOpenAiForUnreads = useCallback((unreadItems: Array<{ channel: MattermostChannel; posts: MattermostPost[]; unreadCount: number }>) => {
+    setAiContextTarget({ type: 'unread', unreadItems });
+    const att = formatUnreadDigestToAttachment({
+      unreadItems,
+      userCache,
+    });
+    setActiveAiAttachment(att);
+    setIsAiDrawerOpen(true);
+  }, [userCache]);
+
+  const handleOpenAiForChannelPosts = useCallback((channel: MattermostChannel, chPosts: MattermostPost[]) => {
+    setAiContextTarget({ type: 'channel' });
+    const att = formatChannelLogsToAttachment({
+      channel,
+      posts: chPosts,
+      userCache,
+      maxPosts: 60,
+    });
+    setActiveAiAttachment(att);
+    setIsAiDrawerOpen(true);
+  }, [userCache]);
 
   const handleApplyDraftToInput = (text: string) => {
     setAppliedAiDraft(text);
@@ -639,6 +710,8 @@ export const App: React.FC = () => {
             onRefreshUnreads={() => fetchChannels(settings)}
             teams={teams}
             webUrl={settings.webUrl}
+            onOpenAiWithUnreads={handleOpenAiForUnreads}
+            onOpenAiWithChannelPosts={handleOpenAiForChannelPosts}
           />
         ) : (
           <LogViewer
@@ -671,16 +744,19 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      {/* AI Wall-bounce Chat Drawer */}
-      <GenericAiChatDrawer
+      {/* AI Wall-bounce Chat Drawer (Remote Hub + Agent) */}
+      <AiRemoteChatDrawer
         isOpen={isAiDrawerOpen}
         onClose={() => setIsAiDrawerOpen(false)}
-        agentUrl={settings.aiAgentUrl || 'http://localhost:3456'}
-        appId="webapp-mattermost-log"
-        topicId={aiTopicId}
+        settings={settings}
         topicTitle={aiTopicTitle}
-        contextFile={aiContextFile}
+        initialAttachment={activeAiAttachment}
+        getCurrentContextAttachment={getCurrentContextAttachment}
         onApplyDraftToInput={handleApplyDraftToInput}
+        onOpenSettings={() => {
+          setIsAiDrawerOpen(false);
+          setIsSettingsOpen(true);
+        }}
       />
 
       {/* Settings Modal */}
