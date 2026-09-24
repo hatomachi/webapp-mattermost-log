@@ -485,16 +485,28 @@ const server = http.createServer(async (req, res) => {
           if (parsed.type === 'assistant' && parsed.message) {
             const contents = parsed.message.content || [];
             let assistantText = '';
+            let hasToolUse = false;
+            const toolNames = [];
+
             for (const item of contents) {
               if (item.type === 'text') {
                 assistantText += item.text;
+              } else if (item.type === 'tool_use') {
+                hasToolUse = true;
+                if (item.name) toolNames.push(item.name);
               }
             }
-            // If delta was not streamed or this contains full message
-            if (assistantText && !fullResponseText) {
+
+            if (hasToolUse) {
+              // Intermediate announce before executing tools (e.g. "チャンネルのログを確認します")
+              const statusMsg = assistantText.trim() || `Claude is using tool: ${toolNames.join(', ') || 'tool'}...`;
+              sendSSE({ type: 'status', message: statusMsg, tool: toolNames[0] });
+            } else if (assistantText) {
+              // Direct or final response text for this turn
               fullResponseText = assistantText;
-              sendSSE({ type: 'delta', text: assistantText });
+              sendSSE({ type: 'replace', text: assistantText });
             }
+
             if (parsed.error) {
               sendSSE({
                 type: 'error',
@@ -521,13 +533,14 @@ const server = http.createServer(async (req, res) => {
                 duration_ms: parsed.duration_ms,
               });
             } else {
-              if (parsed.result && !fullResponseText) {
-                fullResponseText = parsed.result;
-                sendSSE({ type: 'delta', text: parsed.result });
+              const finalResult = parsed.result || fullResponseText;
+              fullResponseText = finalResult;
+              if (finalResult) {
+                sendSSE({ type: 'replace', text: finalResult });
               }
               sendSSE({
                 type: 'done',
-                result: parsed.result || fullResponseText,
+                result: finalResult,
                 cost: parsed.total_cost_usd,
                 duration_ms: parsed.duration_ms,
                 num_turns: parsed.num_turns,

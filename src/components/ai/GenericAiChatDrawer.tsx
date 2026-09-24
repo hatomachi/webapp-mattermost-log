@@ -56,6 +56,7 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
   const [isContextPreviewOpen, setIsContextPreviewOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [appliedId, setAppliedId] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState<string | null>(null);
 
   // Agent Health State
   const [agentStatus, setAgentStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
@@ -253,7 +254,18 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
                   m.id === assistantMsgId ? { ...m, text: accumulatedText } : m
                 )
               );
+            } else if (event.type === 'replace' && event.text) {
+              accumulatedText = event.text;
+              setStatusText(null);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMsgId ? { ...m, text: accumulatedText } : m
+                )
+              );
+            } else if (event.type === 'status' && event.message) {
+              setStatusText(event.message);
             } else if (event.type === 'error') {
+              setStatusText(null);
               const errMsg = event.error || '不明なエラーが発生しました';
               setMessages((prev) =>
                 prev.map((m) =>
@@ -267,7 +279,8 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
                 )
               );
             } else if (event.type === 'done') {
-              if (event.result && !accumulatedText) {
+              setStatusText(null);
+              if (event.result) {
                 accumulatedText = event.result;
                 setMessages((prev) =>
                   prev.map((m) =>
@@ -537,10 +550,20 @@ export const GenericAiChatDrawer: React.FC<Props> = ({
                     : 'bg-zinc-900 border border-zinc-800 text-zinc-200 whitespace-pre-wrap'
                 }`}
               >
-                {m.text || (
-                  <span className="inline-flex items-center space-x-1 text-zinc-500 italic">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-1" />
-                    思考中...
+                {m.text ? (
+                  <div>
+                    {m.text}
+                    {isGenerating && statusText && m.role === 'assistant' && (
+                      <div className="mt-2 text-[10px] text-sky-400 bg-sky-950/40 border border-sky-800/50 rounded px-2 py-1 flex items-center space-x-1.5 animate-pulse font-sans">
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                        <span className="truncate">{statusText}</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="inline-flex items-center space-x-1 text-zinc-400 italic">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-1 shrink-0" />
+                    <span>{statusText || '思考中...'}</span>
                   </span>
                 )}
 
