@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings, MattermostTeam } from '../types/mattermost';
-import { getMe, getMyTeams } from '../services/mattermost';
-import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink, Bot, Cpu } from 'lucide-react';
+import { getMe, getMyTeams, formatEmojiDisplay } from '../services/mattermost';
+import { DEFAULT_FAVORITE_EMOJIS } from '../services/storage';
+import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink, Bot, Cpu, Plus, RotateCcw } from 'lucide-react';
 import { deriveHttpUrls, deriveWsUrl } from '../features/ai/useAiRemoteClient';
 
 interface Props {
@@ -30,6 +31,37 @@ export const SettingsModal: React.FC<Props> = ({
     success: boolean;
     message: string;
   } | null>(null);
+
+  const [newEmojiInput, setNewEmojiInput] = useState('');
+
+  const currentFavoriteEmojis = formData.favoriteEmojis || DEFAULT_FAVORITE_EMOJIS;
+
+  const handleAddFavoriteEmoji = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newEmojiInput.trim().replace(/^:+|:+$/g, '');
+    if (!clean) return;
+    if (!currentFavoriteEmojis.includes(clean)) {
+      setFormData({
+        ...formData,
+        favoriteEmojis: [...currentFavoriteEmojis, clean],
+      });
+    }
+    setNewEmojiInput('');
+  };
+
+  const handleRemoveFavoriteEmoji = (emojiName: string) => {
+    setFormData({
+      ...formData,
+      favoriteEmojis: currentFavoriteEmojis.filter((e) => e !== emojiName),
+    });
+  };
+
+  const handleResetFavoriteEmojis = () => {
+    setFormData({
+      ...formData,
+      favoriteEmojis: DEFAULT_FAVORITE_EMOJIS,
+    });
+  };
 
   const handleTestAiConnection = async () => {
     const hubUrl = (formData.aiHubUrl || 'ws://localhost:8090/ws/client').trim();
@@ -490,6 +522,74 @@ export const SettingsModal: React.FC<Props> = ({
                   <p className="text-[10px] text-zinc-500">メッセージ末尾にスタンプと件数をインライン表示します（カスタム絵文字はテキスト表示）</p>
                 </div>
               </label>
+
+              {/* お気に入りスタンプ設定 */}
+              <div className="col-span-2 bg-zinc-950 p-2.5 rounded border border-zinc-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-zinc-300 text-xs font-semibold">お気に入りスタンプ（クイックパレット）</span>
+                    <p className="text-[10px] text-zinc-500">スタンプ選択時に1タップで押せるスタンプです。社内のカスタム名も追加できます</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetFavoriteEmojis}
+                    className="flex items-center space-x-1 text-[10px] text-zinc-400 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-700"
+                    title="デフォルトの定番スタンプに戻す"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" />
+                    <span>初期値に戻す</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {currentFavoriteEmojis.map((emojiName) => {
+                    const { display, isUnicode } = formatEmojiDisplay(emojiName);
+                    return (
+                      <span
+                        key={emojiName}
+                        className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-xs text-zinc-200"
+                      >
+                        <span className={isUnicode ? 'text-sm leading-none' : 'text-[11px] text-sky-300 font-mono'}>
+                          {display}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFavoriteEmoji(emojiName)}
+                          className="text-zinc-500 hover:text-rose-400 ml-0.5 transition-colors"
+                          title="削除"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center space-x-1.5 pt-1">
+                  <input
+                    type="text"
+                    value={newEmojiInput}
+                    onChange={(e) => setNewEmojiInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddFavoriteEmoji(e);
+                      }
+                    }}
+                    placeholder="絵文字名 (例: thumbsup, arigato, 承知)"
+                    className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddFavoriteEmoji}
+                    disabled={!newEmojiInput.trim()}
+                    className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white px-2.5 py-1 rounded text-xs flex items-center space-x-1 font-semibold transition-colors"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>追加</span>
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center justify-between text-[11px] bg-zinc-950 p-2 rounded border border-zinc-800">

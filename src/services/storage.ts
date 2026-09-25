@@ -4,6 +4,22 @@ const SETTINGS_KEY = 'matterlog_settings';
 const USER_CACHE_KEY = 'matterlog_user_cache';
 const ACTIVE_CHANNEL_KEY = 'matterlog_active_channel_id';
 const CHANNEL_SUBSCRIPTION_KEY = 'matterlog_channel_subscriptions';
+const RECENT_EMOJIS_KEY = 'matterlog_recent_emojis';
+
+export const DEFAULT_FAVORITE_EMOJIS = [
+  '+1',
+  'eyes',
+  'bow',
+  'white_check_mark',
+  'tada',
+  'heart',
+  'pray',
+  'thinking_face',
+  'rocket',
+  'bulb',
+  'smile',
+  'clap',
+];
 
 export const DEFAULT_SETTINGS: AppSettings = {
   serverUrl: '',
@@ -24,6 +40,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiEngine: 'claude',
   aiModel: 'claude-opus-4-7',
   aiTransportMode: 'auto',
+  favoriteEmojis: DEFAULT_FAVORITE_EMOJIS,
 };
 
 export const loadSettings = (): AppSettings => {
@@ -141,4 +158,30 @@ export const getEffectiveChannelSubscription = (
     return 'mention';
   }
   return 'all';
+};
+
+export const loadRecentEmojis = (): string[] => {
+  try {
+    const raw = localStorage.getItem(RECENT_EMOJIS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const saveRecentEmojis = (emojis: string[]): void => {
+  try {
+    localStorage.setItem(RECENT_EMOJIS_KEY, JSON.stringify(emojis.slice(0, 12)));
+  } catch (e) {
+    console.error('Failed to save recent emojis:', e);
+  }
+};
+
+export const addRecentEmoji = (emoji: string): string[] => {
+  const clean = emoji.trim().replace(/^:+|:+$/g, '');
+  if (!clean) return loadRecentEmojis();
+  const current = loadRecentEmojis().filter((e) => e !== clean);
+  const updated = [clean, ...current].slice(0, 12);
+  saveRecentEmojis(updated);
+  return updated;
 };

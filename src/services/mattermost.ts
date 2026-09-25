@@ -497,3 +497,54 @@ export const buildMattermostChannelUrl = (
   return `${base}/channels/${channelSlug}`;
 };
 
+/**
+ * 投稿にリアクション（スタンプ）を追加する
+ */
+export const addReaction = async (
+  serverUrl: string,
+  token: string,
+  userId: string,
+  postId: string,
+  emojiName: string,
+  corsProxy?: string
+): Promise<MattermostReaction> => {
+  const cleanName = emojiName.trim().replace(/^:+|:+$/g, '');
+  return request<MattermostReaction>(
+    serverUrl,
+    token,
+    '/api/v4/reactions',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        post_id: postId,
+        emoji_name: cleanName,
+      }),
+    },
+    corsProxy
+  );
+};
+
+/**
+ * 投稿からリアクション（スタンプ）を削除する
+ */
+export const removeReaction = async (
+  serverUrl: string,
+  token: string,
+  userId: string,
+  postId: string,
+  emojiName: string,
+  corsProxy?: string
+): Promise<{ status: string }> => {
+  const cleanName = emojiName.trim().replace(/^:+|:+$/g, '');
+  return request<{ status: string }>(
+    serverUrl,
+    token,
+    `/api/v4/users/${encodeURIComponent(userId)}/posts/${encodeURIComponent(postId)}/reactions/${encodeURIComponent(cleanName)}`,
+    {
+      method: 'DELETE',
+    },
+    corsProxy
+  );
+};
+

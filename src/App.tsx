@@ -9,6 +9,7 @@ import {
   MattermostPost,
   MattermostTeam,
   MattermostUser,
+  MattermostReaction,
 } from './types/mattermost';
 import {
   loadSettings,
@@ -20,8 +21,11 @@ import {
   loadChannelSubscriptions,
   saveChannelSubscriptions,
   getEffectiveChannelSubscription,
+  loadRecentEmojis,
+  addRecentEmoji,
 } from './services/storage';
 import {
+  getMe,
   getMyTeams,
   getTeamChannels,
   getTeamChannelMembers,
@@ -31,6 +35,9 @@ import {
   createPost,
   buildMattermostChannelUrl,
   viewChannel,
+  addReaction,
+  removeReaction,
+  getPostReactions,
 } from './services/mattermost';
 import { Header } from './components/Header';
 import { ChannelSidebar } from './components/ChannelSidebar';
@@ -59,6 +66,8 @@ export const App: React.FC = () => {
   const [activeChannelId, setActiveChannelId] = useState<string>(loadActiveChannelId);
   const [posts, setPosts] = useState<MattermostPost[]>([]);
   const [userCache, setUserCache] = useState<Record<string, MattermostUser>>(loadUserCache);
+  const [currentUser, setCurrentUser] = useState<MattermostUser | null>(null);
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(loadRecentEmojis);
   const [channelSubscriptions, setChannelSubscriptions] = useState<Record<string, ChannelSubscriptionMode>>(loadChannelSubscriptions);
 
   const [isLoading, setIsLoading] = useState(false);
@@ -135,11 +144,31 @@ export const App: React.FC = () => {
       setIsLoading(true);
       setErrorMsg(null);
 
-      const teams = await getMyTeams(
-        currentSettings.serverUrl,
-        currentSettings.token,
-        currentSettings.corsProxy
-      );
+      const [me, teams] = await Promise.all([
+        getMe(
+          currentSettings.serverUrl,
+          currentSettings.token,
+          currentSettings.corsProxy
+        ).catch((e) => {
+          console.warn('Failed to fetch me:', e);
+          return null;
+        }),
+        getMyTeams(
+          currentSettings.serverUrl,
+          currentSettings.token,
+          currentSettings.corsProxy
+        ),
+      ]);
+
+      if (me) {
+        setCurrentUser(me);
+        setUserCache((prev) => {
+          const updated = { ...prev, [me.id]: me };
+          saveUserCache(updated);
+          return updated;
+        });
+      }
+
       setTeams(teams);
       const teamMap = new Map<string, MattermostTeam>(teams.map((t) => [t.id, t]));
 
@@ -434,6 +463,146 @@ export const App: React.FC = () => {
       return true;
     },
     [settings.serverUrl, settings.token, settings.corsProxy, activeChannelId, userCache, resolveMissingUsers]
+  );
+
+  // リアクション（スタンプ）のトグル追加・削除（楽観的UI更新付き）
+  const handleToggleReaction = useCallback(
+    async (postId: string, emojiName: string) => {
+      if (!settings.serverUrl || !settings.token) return;
+      const cleanName = emojiName.trim().replace(/^:+|:+$/g, '');
+      if (!cleanName) return;
+
+      // ユーザーIDの確保
+      let userId = currentUser?.id;
+      if (!userId) {
+        try {
+          const me = await getMe(settings.serverUrl, settings.token, settings.corsProxy);
+          setCurrentUser(me);
+          userId = me.id;
+        } catch (e: any) {
+          setErrorMsg('ユーザー情報の取得に失敗しました: ' + (e.message || ''));
+          return;
+        }
+      }
+
+      // 対象投稿の探索（メイン投稿または展開中スレッド返信）
+      let targetPost: MattermostPost | undefined = posts.find((p) => p.id === postId);
+      let targetRootId: string | undefined;
+
+      if (!targetPost) {
+        for (const [rId, rList] of Object.entries(threadPosts)) {
+          const found = rList.find((p) => p.id === postId);
+          if (found) {
+            targetPost = found;
+            targetRootId = rId;
+            break;
+          }
+        }
+      }
+
+      const currentReactions = targetPost ? getPostReactions(targetPost) : [];
+      const existingReaction = currentReactions.find(
+        (r) => r.emoji_name === cleanName && r.user_id === userId
+      );
+      const isRemoving = Boolean(existingReaction);
+
+      // 楽観的更新
+      let newReactions: MattermostReaction[];
+      if (isRemoving) {
+        newReactions = currentReactions.filter(
+          (r) => !(r.emoji_name === cleanName && r.user_id === userId)
+        );
+      } else {
+        newReactions = [
+          ...currentReactions,
+          {
+            user_id: userId,
+            post_id: postId,
+            emoji_name: cleanName,
+            create_at: Date.now(),
+          },
+        ];
+        // 最近使ったスタンプに追加
+        setRecentEmojis(addRecentEmoji(cleanName));
+      }
+
+      const updatePostReactions = (p: MattermostPost): MattermostPost => {
+        if (p.id !== postId) return p;
+        return {
+          ...p,
+          has_reactions: newReactions.length > 0,
+          metadata: {
+            ...(p.metadata || {}),
+            reactions: newReactions,
+          },
+        };
+      };
+
+      if (targetPost) {
+        setPosts((prev) => prev.map(updatePostReactions));
+        if (targetRootId) {
+          setThreadPosts((prev) => ({
+            ...prev,
+            [targetRootId!]: prev[targetRootId!]?.map(updatePostReactions) || [],
+          }));
+        }
+      }
+
+      // API 実行
+      try {
+        if (isRemoving) {
+          await removeReaction(
+            settings.serverUrl,
+            settings.token,
+            userId,
+            postId,
+            cleanName,
+            settings.corsProxy
+          );
+        } else {
+          await addReaction(
+            settings.serverUrl,
+            settings.token,
+            userId,
+            postId,
+            cleanName,
+            settings.corsProxy
+          );
+        }
+      } catch (err: any) {
+        console.error('Failed to toggle reaction:', err);
+        setErrorMsg(`スタンプ操作に失敗しました: ${err.message || ''}`);
+        // ロールバック
+        if (targetPost) {
+          const rollbackPostReactions = (p: MattermostPost): MattermostPost => {
+            if (p.id !== postId) return p;
+            return {
+              ...p,
+              has_reactions: currentReactions.length > 0,
+              metadata: {
+                ...(p.metadata || {}),
+                reactions: currentReactions,
+              },
+            };
+          };
+          setPosts((prev) => prev.map(rollbackPostReactions));
+          if (targetRootId) {
+            setThreadPosts((prev) => ({
+              ...prev,
+              [targetRootId!]: prev[targetRootId!]?.map(rollbackPostReactions) || [],
+            }));
+          }
+        }
+      }
+    },
+    [settings, currentUser, posts, threadPosts]
+  );
+
+  const handleAddReaction = useCallback(
+    async (postId: string, emojiName: string) => {
+      await handleToggleReaction(postId, emojiName);
+    },
+    [handleToggleReaction]
   );
 
   // アクティブチャンネル変更時に投稿取得 & スレッド初期化
@@ -789,6 +958,11 @@ export const App: React.FC = () => {
             onOpenAiWithChannelPosts={handleOpenAiForChannelPosts}
             channelSubscriptions={channelSubscriptions}
             onToggleChannelSubscription={handleToggleChannelSubscription}
+            currentUserId={currentUser?.id}
+            favoriteEmojis={settings.favoriteEmojis}
+            recentEmojis={recentEmojis}
+            onToggleReaction={handleToggleReaction}
+            onAddReaction={handleAddReaction}
           />
         ) : (
           <LogViewer
@@ -819,6 +993,11 @@ export const App: React.FC = () => {
             isMarkingRead={isMarkingCurrentChannelRead}
             isMentionOnly={isCurrentChannelMentionOnly}
             onToggleChannelSubscription={() => activeChannelId && handleToggleChannelSubscription(activeChannelId)}
+            currentUserId={currentUser?.id}
+            favoriteEmojis={settings.favoriteEmojis}
+            recentEmojis={recentEmojis}
+            onToggleReaction={handleToggleReaction}
+            onAddReaction={handleAddReaction}
           />
         )}
       </div>

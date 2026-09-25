@@ -132,6 +132,7 @@ export interface AppSettings {
   aiEngine?: 'claude' | 'copilot';
   aiModel?: string;
   aiTransportMode?: 'auto' | 'ws' | 'http';
+  favoriteEmojis?: string[];
 }
 
 export interface ReplyTarget {

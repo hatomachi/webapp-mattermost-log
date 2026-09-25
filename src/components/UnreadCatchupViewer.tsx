@@ -6,6 +6,7 @@ import {
   MattermostUser,
   MattermostFileInfo,
   MattermostTeam,
+  MattermostReaction,
   CatchupTabMode,
   ChannelSubscriptionMode,
 } from '../types/mattermost';
@@ -20,6 +21,7 @@ import {
   buildMattermostChannelUrl,
 } from '../services/mattermost';
 import { getEffectiveChannelSubscription } from '../services/storage';
+import { EmojiPicker } from './EmojiPicker';
 import {
   Check,
   CheckCheck,
@@ -40,6 +42,7 @@ import {
   Bot,
   Bell,
   BellOff,
+  Smile,
 } from 'lucide-react';
 
 interface Props {
@@ -65,6 +68,11 @@ interface Props {
   onOpenAiWithChannelPosts?: (channel: MattermostChannel, posts: MattermostPost[]) => void;
   channelSubscriptions?: Record<string, ChannelSubscriptionMode>;
   onToggleChannelSubscription?: (channelId: string) => void;
+  currentUserId?: string;
+  favoriteEmojis?: string[];
+  recentEmojis?: string[];
+  onToggleReaction?: (postId: string, emojiName: string) => Promise<void>;
+  onAddReaction?: (postId: string, emojiName: string) => Promise<void>;
 }
 
 interface UnreadChannelItem {
@@ -111,6 +119,11 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   onOpenAiWithChannelPosts,
   channelSubscriptions = {},
   onToggleChannelSubscription,
+  currentUserId,
+  favoriteEmojis,
+  recentEmojis,
+  onToggleReaction,
+  onAddReaction,
 }) => {
   const [channelStates, setChannelStates] = useState<Record<string, ChannelCatchupState>>({});
   const [activeTab, setActiveTab] = useState<CatchupTabMode>('main');
@@ -118,6 +131,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
   const [isMarkingMentionOnlyRead, setIsMarkingMentionOnlyRead] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pickerPostId, setPickerPostId] = useState<string | null>(null);
 
   // 関数・プロパティを ref に保持して useEffect の不要な再実行を防ぐ
   const resolveMissingUsersRef = useRef(resolveMissingUsers);
@@ -561,6 +575,60 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     );
   };
 
+  // 内部 channelStates も楽観的更新するリアクショントグルハンドラー
+  const handleToggleReactionInternal = async (postId: string, emojiName: string) => {
+    const cleanName = emojiName.trim().replace(/^:+|:+$/g, '');
+    if (!cleanName) return;
+
+    setChannelStates((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [chId, state] of Object.entries(prev)) {
+        const pIdx = state.posts.findIndex((p) => p.id === postId);
+        if (pIdx !== -1) {
+          changed = true;
+          const targetPost = state.posts[pIdx];
+          const currentReactions = getPostReactions(targetPost);
+          const hasReacted = Boolean(
+            currentUserId && currentReactions.some((r) => r.emoji_name === cleanName && r.user_id === currentUserId)
+          );
+          let newReactions: MattermostReaction[];
+          if (hasReacted) {
+            newReactions = currentReactions.filter(
+              (r) => !(r.emoji_name === cleanName && r.user_id === currentUserId)
+            );
+          } else {
+            newReactions = [
+              ...currentReactions,
+              {
+                user_id: currentUserId || '',
+                post_id: postId,
+                emoji_name: cleanName,
+                create_at: Date.now(),
+              },
+            ];
+          }
+          const updatedPosts = [...state.posts];
+          updatedPosts[pIdx] = {
+            ...targetPost,
+            has_reactions: newReactions.length > 0,
+            metadata: {
+              ...(targetPost.metadata || {}),
+              reactions: newReactions,
+            },
+          };
+          next[chId] = {
+            ...state,
+            posts: updatedPosts,
+          };
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    await onToggleReaction?.(postId, cleanName);
+  };
+
   const renderReactions = (post: MattermostPost) => {
     if (!showReactions) return null;
     const reactions = getPostReactions(post);
@@ -572,6 +640,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
       <span className="inline-flex flex-wrap items-center gap-1 ml-1.5 align-baseline select-none">
         {grouped.map((r) => {
           const { display, isUnicode } = formatEmojiDisplay(r.name);
+          const hasReacted = Boolean(currentUserId && r.users.includes(currentUserId));
           const userNames = r.users
             .map((uid) => {
               const u = userCache[uid];
@@ -579,21 +648,32 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
             })
             .filter(Boolean)
             .join(', ');
-          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}`;
+          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}\n${
+            hasReacted ? 'クリックでスタンプ解除' : 'クリックでスタンプを被せる'
+          }`;
 
           return (
-            <span
+            <button
               key={r.name}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleReactionInternal(post.id, r.name);
+              }}
               title={tooltip}
-              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors ${
-                isUnicode
-                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500'
-                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600'
+              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors cursor-pointer select-none ${
+                hasReacted
+                  ? 'bg-sky-950/80 border-sky-500/80 text-sky-200 hover:border-sky-400 font-semibold ring-1 ring-sky-500/30'
+                  : isUnicode
+                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800'
               }`}
             >
               <span className={isUnicode ? 'text-xs -my-0.5' : 'text-[10px]'}>{display}</span>
-              <span className="text-[9px] text-zinc-400 font-semibold">{r.count}</span>
-            </span>
+              <span className={`text-[9px] font-semibold ${hasReacted ? 'text-sky-300' : 'text-zinc-400'}`}>
+                {r.count}
+              </span>
+            </button>
           );
         })}
       </span>
@@ -991,7 +1071,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                       return (
                         <div
                           key={post.id}
-                          className={`py-1 hover:bg-zinc-800/30 px-1 rounded transition-colors ${fontClass}`}
+                          className={`group py-1 hover:bg-zinc-800/30 px-1 rounded transition-colors ${fontClass}`}
                         >
                           <div className="flex items-baseline space-x-2">
                             {/* Timestamp */}
@@ -1011,6 +1091,20 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                             <div className="flex-1 text-zinc-200 break-words whitespace-pre-wrap select-text">
                               {renderFormattedText(post.message)}
                               {renderReactions(post)}
+                              {onAddReaction && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPickerPostId(post.id);
+                                  }}
+                                  className="inline-flex items-center space-x-0.5 ml-1 text-[10px] px-1 py-0.2 rounded text-zinc-500 hover:text-amber-300 hover:bg-amber-950/40 select-none align-baseline cursor-pointer transition-opacity opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                                  title="スタンプを押す"
+                                >
+                                  <Smile className="w-2.5 h-2.5" />
+                                  <span className="text-[9px]">スタンプ</span>
+                                </button>
+                              )}
                               {renderAttachments(post)}
                             </div>
                           </div>
@@ -1044,6 +1138,19 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
           })
         )}
       </div>
+
+      {/* スタンプ（リアクション）ピッカー */}
+      <EmojiPicker
+        isOpen={Boolean(pickerPostId)}
+        onClose={() => setPickerPostId(null)}
+        onSelectEmoji={(emojiName) => {
+          if (pickerPostId) {
+            handleToggleReactionInternal(pickerPostId, emojiName);
+          }
+        }}
+        favoriteEmojis={favoriteEmojis}
+        recentEmojis={recentEmojis}
+      />
     </div>
   );
 };

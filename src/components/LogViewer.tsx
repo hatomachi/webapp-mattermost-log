@@ -7,6 +7,7 @@ import {
   getGroupedReactions,
   formatEmojiDisplay,
 } from '../services/mattermost';
+import { EmojiPicker } from './EmojiPicker';
 import {
   ArrowDown,
   CornerDownRight,
@@ -55,6 +56,11 @@ interface Props {
   isMarkingRead?: boolean;
   isMentionOnly?: boolean;
   onToggleChannelSubscription?: () => void;
+  currentUserId?: string;
+  favoriteEmojis?: string[];
+  recentEmojis?: string[];
+  onToggleReaction?: (postId: string, emojiName: string) => Promise<void>;
+  onAddReaction?: (postId: string, emojiName: string) => Promise<void>;
 }
 
 export const LogViewer: React.FC<Props> = ({
@@ -85,6 +91,11 @@ export const LogViewer: React.FC<Props> = ({
   isMarkingRead = false,
   isMentionOnly = false,
   onToggleChannelSubscription,
+  currentUserId,
+  favoriteEmojis,
+  recentEmojis,
+  onToggleReaction,
+  onAddReaction,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -93,6 +104,7 @@ export const LogViewer: React.FC<Props> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isFilterMode, setIsFilterMode] = useState(false); // true: マッチ行のみ表示, false: ハイライトのみ
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [pickerPostId, setPickerPostId] = useState<string | null>(null);
 
   // 投稿・返信ステート
   const [inputText, setInputText] = useState('');
@@ -431,7 +443,7 @@ export const LogViewer: React.FC<Props> = ({
     );
   };
 
-  // スタンプ（リアクション）描画（行を増やさないインライン表示）
+  // スタンプ（リアクション）描画（行を増やさないインライン表示、クリックで被せ・解除）
   const renderReactions = (post: MattermostPost) => {
     if (!showReactions) return null;
     const reactions = getPostReactions(post);
@@ -443,6 +455,7 @@ export const LogViewer: React.FC<Props> = ({
       <span className="inline-flex flex-wrap items-center gap-1 ml-1.5 align-baseline select-none">
         {grouped.map((r) => {
           const { display, isUnicode } = formatEmojiDisplay(r.name);
+          const hasReacted = Boolean(currentUserId && r.users.includes(currentUserId));
           const userNames = r.users
             .map((uid) => {
               const u = userCache[uid];
@@ -450,21 +463,32 @@ export const LogViewer: React.FC<Props> = ({
             })
             .filter(Boolean)
             .join(', ');
-          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}`;
+          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}\n${
+            hasReacted ? 'クリックでスタンプ解除' : 'クリックでスタンプを被せる'
+          }`;
 
           return (
-            <span
+            <button
               key={r.name}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleReaction?.(post.id, r.name);
+              }}
               title={tooltip}
-              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors ${
-                isUnicode
-                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500'
-                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600'
+              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors cursor-pointer select-none ${
+                hasReacted
+                  ? 'bg-sky-950/80 border-sky-500/80 text-sky-200 hover:border-sky-400 font-semibold ring-1 ring-sky-500/30'
+                  : isUnicode
+                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800'
               }`}
             >
               <span className={isUnicode ? 'text-xs -my-0.5' : 'text-[10px]'}>{display}</span>
-              <span className="text-[9px] text-zinc-400 font-semibold">{r.count}</span>
-            </span>
+              <span className={`text-[9px] font-semibold ${hasReacted ? 'text-sky-300' : 'text-zinc-400'}`}>
+                {r.count}
+              </span>
+            </button>
           );
         })}
       </span>
@@ -776,6 +800,21 @@ export const LogViewer: React.FC<Props> = ({
                               </button>
                             )}
 
+                            {onAddReaction && !isSystemMessage && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPickerPostId(post.id);
+                                }}
+                                className="inline-flex items-center space-x-0.5 ml-1 text-[10px] px-1 py-0.2 rounded text-zinc-500 hover:text-amber-300 hover:bg-amber-950/40 select-none align-baseline cursor-pointer transition-opacity opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                                title="スタンプを押す"
+                              >
+                                <Smile className="w-2.5 h-2.5" />
+                                <span className="text-[9px]">スタンプ</span>
+                              </button>
+                            )}
+
                             {onOpenAiWithThread && !isSystemMessage && (
                               <button
                                 type="button"
@@ -865,6 +904,20 @@ export const LogViewer: React.FC<Props> = ({
                                   >
                                     <Reply className="w-2.5 h-2.5" />
                                     <span className="text-[9px]">返信</span>
+                                  </button>
+                                )}
+                                {onAddReaction && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPickerPostId(reply.id);
+                                    }}
+                                    className="inline-flex items-center space-x-0.5 ml-1 text-[10px] px-1 py-0.2 rounded text-zinc-500 hover:text-amber-300 hover:bg-amber-950/40 select-none align-baseline cursor-pointer transition-opacity opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                                    title="スタンプを押す"
+                                  >
+                                    <Smile className="w-2.5 h-2.5" />
+                                    <span className="text-[9px]">スタンプ</span>
                                   </button>
                                 )}
                                 {onOpenAiWithThread && (
@@ -1038,6 +1091,19 @@ export const LogViewer: React.FC<Props> = ({
           )}
         </div>
       )}
+
+      {/* スタンプ（リアクション）ピッカー */}
+      <EmojiPicker
+        isOpen={Boolean(pickerPostId)}
+        onClose={() => setPickerPostId(null)}
+        onSelectEmoji={(emojiName) => {
+          if (pickerPostId) {
+            onAddReaction?.(pickerPostId, emojiName);
+          }
+        }}
+        favoriteEmojis={favoriteEmojis}
+        recentEmojis={recentEmojis}
+      />
     </div>
   );
 };
