@@ -1,6 +1,7 @@
 import {
   MattermostChannel,
   MattermostChannelMember,
+  MattermostFileInfo,
   MattermostPost,
   MattermostPostListResponse,
   MattermostReaction,
@@ -51,9 +52,15 @@ const request = async <T>(
   const url = buildUrl(serverUrl, path, corsProxy);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token.trim()}`,
-    'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
   };
+
+  // FormData の場合はブラウザが境界文字列 (boundary) を自動付与するため Content-Type を手動設定しない
+  if (!(options.body instanceof FormData)) {
+    if (!headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+  }
 
   try {
     const res = await fetch(url, {
@@ -435,6 +442,43 @@ export const formatEmojiDisplay = (emojiName: string): { display: string; isUnic
   return { display: `:${cleanName}:`, isUnicode: false };
 };
 
+export interface MattermostFileUploadResponse {
+  file_infos: MattermostFileInfo[];
+  client_ids: string[];
+}
+
+/**
+ * チャンネルにファイルをアップロード (POST /api/v4/files)
+ */
+export const uploadFiles = async (
+  serverUrl: string,
+  token: string,
+  channelId: string,
+  files: File[],
+  corsProxy?: string
+): Promise<MattermostFileInfo[]> => {
+  if (!files || files.length === 0) return [];
+
+  const formData = new FormData();
+  formData.append('channel_id', channelId);
+  for (const file of files) {
+    formData.append('files', file, file.name);
+  }
+
+  const res = await request<MattermostFileUploadResponse>(
+    serverUrl,
+    token,
+    '/api/v4/files',
+    {
+      method: 'POST',
+      body: formData,
+    },
+    corsProxy
+  );
+
+  return res.file_infos || [];
+};
+
 /**
  * チャンネルにメッセージを新規投稿、またはスレッドに返信
  */
@@ -444,15 +488,24 @@ export const createPost = async (
   channelId: string,
   message: string,
   rootId?: string,
+  fileIds?: string[],
   corsProxy?: string
 ): Promise<MattermostPost> => {
-  const payload: { channel_id: string; message: string; root_id?: string } = {
+  const payload: {
+    channel_id: string;
+    message: string;
+    root_id?: string;
+    file_ids?: string[];
+  } = {
     channel_id: channelId,
     message: message.trim(),
   };
 
   if (rootId && rootId.trim() !== '') {
     payload.root_id = rootId.trim();
+  }
+  if (fileIds && fileIds.length > 0) {
+    payload.file_ids = fileIds;
   }
 
   return request<MattermostPost>(

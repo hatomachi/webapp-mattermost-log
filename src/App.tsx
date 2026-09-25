@@ -10,6 +10,7 @@ import {
   MattermostTeam,
   MattermostUser,
   MattermostReaction,
+  MattermostFileInfo,
 } from './types/mattermost';
 import {
   loadSettings,
@@ -34,6 +35,7 @@ import {
   getUsersByIds,
   getChannelUsers,
   createPost,
+  uploadFiles,
   buildMattermostChannelUrl,
   viewChannel,
   addReaction,
@@ -452,9 +454,33 @@ export const App: React.FC = () => {
     }
   }, [settings.serverUrl, settings.token, settings.corsProxy, resolveMissingUsers]);
 
+  // ファイルアップロードハンドラー
+  const handleUploadFile = useCallback(
+    async (file: File): Promise<MattermostFileInfo> => {
+      if (!settings.serverUrl || !settings.token || !activeChannelId) {
+        throw new Error('サーバーに接続されていないか、チャンネルが未選択です');
+      }
+
+      const fileInfos = await uploadFiles(
+        settings.serverUrl,
+        settings.token,
+        activeChannelId,
+        [file],
+        settings.corsProxy
+      );
+
+      if (!fileInfos || fileInfos.length === 0) {
+        throw new Error('ファイルのアップロードに失敗しました');
+      }
+
+      return fileInfos[0];
+    },
+    [settings.serverUrl, settings.token, settings.corsProxy, activeChannelId]
+  );
+
   // メッセージ投稿・スレッド返信ハンドラー
   const handleSendPost = useCallback(
-    async (message: string, rootId?: string): Promise<boolean> => {
+    async (message: string, rootId?: string, fileIds?: string[]): Promise<boolean> => {
       if (!settings.serverUrl || !settings.token || !activeChannelId) {
         throw new Error('サーバーに接続されていないか、チャンネルが未選択です');
       }
@@ -465,6 +491,7 @@ export const App: React.FC = () => {
         activeChannelId,
         message,
         rootId,
+        fileIds,
         settings.corsProxy
       );
 
@@ -1031,6 +1058,7 @@ export const App: React.FC = () => {
             threadPosts={threadPosts}
             loadingThreads={loadingThreads}
             onFetchThread={handleFetchThread}
+            onUploadFile={handleUploadFile}
             onSendPost={handleSendPost}
             onOpenAiWithThread={handleOpenAiForThread}
             onOpenAiWithChannel={handleOpenAiForChannel}

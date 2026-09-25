@@ -30,6 +30,18 @@ import {
   AtSign,
 } from 'lucide-react';
 
+export interface AttachedFile {
+  id: string;
+  file: File;
+  name: string;
+  size: number;
+  type: string;
+  previewUrl?: string;
+  fileInfo?: MattermostFileInfo;
+  status: 'uploading' | 'success' | 'error';
+  error?: string;
+}
+
 interface Props {
   posts: MattermostPost[];
   userCache: Record<string, MattermostUser>;
@@ -50,7 +62,8 @@ interface Props {
   threadPosts?: Record<string, MattermostPost[]>;
   loadingThreads?: Record<string, boolean>;
   onFetchThread?: (postId: string) => Promise<void>;
-  onSendPost?: (message: string, rootId?: string) => Promise<boolean>;
+  onUploadFile?: (file: File) => Promise<MattermostFileInfo>;
+  onSendPost?: (message: string, rootId?: string, fileIds?: string[]) => Promise<boolean>;
   onOpenAiWithThread?: (rootPost: MattermostPost) => void;
   onOpenAiWithChannel?: () => void;
   appliedDraft?: string | null;
@@ -88,6 +101,7 @@ export const LogViewer: React.FC<Props> = ({
   threadPosts = {},
   loadingThreads = {},
   onFetchThread,
+  onUploadFile,
   onSendPost,
   onOpenAiWithThread,
   onOpenAiWithChannel,
@@ -125,6 +139,12 @@ export const LogViewer: React.FC<Props> = ({
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // 添付ファイルステート
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Handle draft text injected from AI chat drawer
   useEffect(() => {
@@ -202,13 +222,19 @@ export const LogViewer: React.FC<Props> = ({
     setShowScrollBottom(!isNearBottom);
   };
 
-  // チャンネル変更時に最下部へスクロール & 検索・入力初期化
+  // チャンネル変更時に最下部へスクロール & 検索・入力・添付ファイル初期化
   useEffect(() => {
     scrollToBottom(false);
     setExpandedThreads({});
     setReplyTarget(null);
     setInputText('');
     setSendError(null);
+    setAttachedFiles((prev) => {
+      prev.forEach((att) => {
+        if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      });
+      return [];
+    });
   }, [channelName]);
 
   // 新着メッセージ受信時に最下部表示中ならスクロール追従
@@ -396,19 +422,170 @@ export const LogViewer: React.FC<Props> = ({
     return loadedChannelUsers;
   }, [channelUsersProp, loadedChannelUsers]);
 
+  // ファイル選択・追加＆即時アップロード処理
+  const handleSelectFiles = async (files: FileList | File[]) => {
+    if (!files || files.length === 0 || !onUploadFile) return;
+
+    const fileArray = Array.from(files);
+    if (attachedFiles.length + fileArray.length > 10) {
+      setSendError('1つの投稿に添付できるファイルは最大10件までです');
+    }
+    const availableSlots = Math.max(0, 10 - attachedFiles.length);
+    const toProcess = fileArray.slice(0, availableSlots);
+
+    if (toProcess.length === 0) return;
+
+    const newAttachments: AttachedFile[] = toProcess.map((file) => {
+      const isImg = file.type?.startsWith('image/');
+      let previewUrl: string | undefined = undefined;
+      if (isImg) {
+        try {
+          previewUrl = URL.createObjectURL(file);
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        file,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        previewUrl,
+        status: 'uploading' as const,
+      };
+    });
+
+    setAttachedFiles((prev) => [...prev, ...newAttachments]);
+
+    // それぞれバックグラウンドでアップロード
+    for (const item of newAttachments) {
+      try {
+        const fileInfo = await onUploadFile(item.file);
+        setAttachedFiles((prev) =>
+          prev.map((a) => (a.id === item.id ? { ...a, status: 'success', fileInfo } : a))
+        );
+      } catch (err: any) {
+        setAttachedFiles((prev) =>
+          prev.map((a) =>
+            a.id === item.id
+              ? { ...a, status: 'error', error: err.message || 'アップロード失敗' }
+              : a
+          )
+        );
+      }
+    }
+  };
+
+  // 添付ファイル削除
+  const handleRemoveAttachment = (id: string) => {
+    setAttachedFiles((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((a) => a.id !== id);
+    });
+  };
+
+  // クリップボードからの貼り付け (C-v: 画像・ファイル)
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const filesToUpload: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) {
+          // 画像でファイル名がgenericな場合はタイムスタンプを付与
+          if (file.type.startsWith('image/')) {
+            const ext = file.type.split('/')[1] || 'png';
+            const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
+            const fileName = (!file.name || file.name === 'image.png')
+              ? `image_${timestamp}.${ext}`
+              : file.name;
+            filesToUpload.push(new File([file], fileName, { type: file.type }));
+          } else {
+            filesToUpload.push(file);
+          }
+        }
+      }
+    }
+
+    if (filesToUpload.length > 0) {
+      e.preventDefault();
+      handleSelectFiles(filesToUpload);
+    }
+  };
+
+  // ドラッグ＆ドロップ対応
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleSelectFiles(e.dataTransfer.files);
+    }
+  };
+
   // 投稿・返信送信
   const handleSubmit = async () => {
     const trimmed = inputText.trim();
-    if (!trimmed || isSending || !onSendPost) return;
+    const hasSuccessfulFiles = attachedFiles.some((f) => f.status === 'success' && f.fileInfo);
+    const hasUploadingFiles = attachedFiles.some((f) => f.status === 'uploading');
+
+    if ((!trimmed && !hasSuccessfulFiles) || isSending || !onSendPost) return;
+
+    if (hasUploadingFiles) {
+      setSendError('ファイルのアップロードが完了するまでお待ちください');
+      return;
+    }
 
     setIsSending(true);
     setSendError(null);
 
     try {
       const isReply = Boolean(replyTarget);
-      await onSendPost(trimmed, replyTarget?.rootId);
+      const fileIds = attachedFiles
+        .filter((f) => f.status === 'success' && f.fileInfo)
+        .map((f) => f.fileInfo!.id);
+
+      await onSendPost(trimmed, replyTarget?.rootId, fileIds.length > 0 ? fileIds : undefined);
+
       setInputText('');
       setReplyTarget(null);
+      attachedFiles.forEach((att) => {
+        if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      });
+      setAttachedFiles([]);
 
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
@@ -645,7 +822,34 @@ export const LogViewer: React.FC<Props> = ({
   let lastDateStr = '';
 
   return (
-    <div className="relative flex-1 flex flex-col h-full bg-zinc-950 overflow-hidden font-mono">
+    <div
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`relative flex-1 flex flex-col h-full bg-zinc-950 overflow-hidden font-mono ${
+        isDragging ? 'ring-2 ring-emerald-500/80 ring-inset' : ''
+      }`}
+    >
+      {/* ドラッグ＆ドロップ オーバーレイ */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-zinc-950/85 backdrop-blur-xs flex flex-col items-center justify-center pointer-events-none transition-all">
+          <div className="p-6 rounded-2xl bg-zinc-900/95 border-2 border-dashed border-emerald-500/80 shadow-2xl flex flex-col items-center space-y-3 text-center max-w-sm mx-4">
+            <div className="p-3.5 rounded-full bg-emerald-500/20 text-emerald-400 animate-bounce">
+              <Paperclip className="w-8 h-8" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-zinc-100 font-mono">
+                ファイルをドロップして #{channelName} に添付
+              </div>
+              <div className="text-xs text-zinc-400 font-mono mt-1">
+                画像やログファイル等を直接アップロードできます（最大10件）
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Inline Grep / Search Toolbar */}
       <div className="border-b border-zinc-800/80 bg-zinc-900/60 px-2 py-1 flex items-center justify-between text-xs select-none">
         <div className="flex items-center space-x-2 flex-1 max-w-md">
@@ -1168,8 +1372,90 @@ export const LogViewer: React.FC<Props> = ({
             </div>
           )}
 
+          {/* 添付中ファイルプレビューバー */}
+          {attachedFiles.length > 0 && (
+            <div className="px-2 pt-1.5 pb-1 flex items-center gap-1.5 overflow-x-auto scrollbar-thin border-b border-zinc-800/60 bg-zinc-950/70 select-none">
+              {attachedFiles.map((att) => {
+                const isImg =
+                  att.type?.startsWith('image/') ||
+                  ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(
+                    (att.name.split('.').pop() || '').toLowerCase()
+                  );
+                const isUploading = att.status === 'uploading';
+                const isError = att.status === 'error';
+
+                return (
+                  <div
+                    key={att.id}
+                    className={`relative shrink-0 flex items-center space-x-1.5 rounded px-2 py-1 text-xs border font-mono ${
+                      isError
+                        ? 'bg-rose-950/40 border-rose-800/80 text-rose-300'
+                        : isUploading
+                        ? 'bg-zinc-900/90 border-emerald-500/40 text-zinc-300'
+                        : 'bg-zinc-900 border-zinc-700/80 text-zinc-200'
+                    }`}
+                  >
+                    {/* サムネイル or アイコン */}
+                    {isImg && att.previewUrl ? (
+                      <img
+                        src={att.previewUrl}
+                        alt={att.name}
+                        className="w-6 h-6 rounded object-cover border border-zinc-700 shrink-0"
+                      />
+                    ) : isImg ? (
+                      <ImageIcon className="w-4 h-4 text-sky-400 shrink-0" />
+                    ) : (
+                      <FileText className="w-4 h-4 text-amber-400 shrink-0" />
+                    )}
+
+                    {/* ファイル情報 */}
+                    <div className="max-w-[120px] truncate text-left">
+                      <div className="truncate text-[11px] leading-tight" title={att.name}>
+                        {att.name}
+                      </div>
+                      <div className="text-[9px] text-zinc-500 leading-tight">
+                        {isUploading ? (
+                          <span className="text-emerald-400 flex items-center space-x-1">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            <span>アップロード中...</span>
+                          </span>
+                        ) : isError ? (
+                          <span className="text-rose-400" title={att.error}>失敗</span>
+                        ) : (
+                          <span>{formatFileSize(att.size)}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 削除ボタン */}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveAttachment(att.id)}
+                      className="p-0.5 rounded text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors ml-0.5"
+                      title="添付解除"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* 入力行 */}
           <div className="p-1.5 sm:px-2.5 flex items-end space-x-1.5 relative">
+            {/* 隠しファイル選択 input */}
+            <input
+              type="file"
+              multiple
+              ref={fileInputRef}
+              onChange={(e) => {
+                if (e.target.files) handleSelectFiles(e.target.files);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+              className="hidden"
+            />
+
             {/* プロンプトラベル */}
             <div className="shrink-0 pb-1 text-zinc-500 font-mono text-[11px] hidden sm:flex items-center select-none">
               <span className="text-emerald-500/80 font-bold mr-1">
@@ -1192,6 +1478,17 @@ export const LogViewer: React.FC<Props> = ({
               title="メンションを挿入 (@)"
             >
               <AtSign className="w-3.5 h-3.5" />
+            </button>
+
+            {/* ファイル添付ボタン (📎) */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isSending}
+              className="shrink-0 p-1.5 mb-0.5 rounded font-mono text-xs transition-colors flex items-center justify-center min-w-[28px] h-[28px] border bg-zinc-900/90 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border-zinc-700/80 cursor-pointer disabled:opacity-40"
+              title="ファイルを添付 (画像C-v・ファイルD&Dも対応)"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
             </button>
 
             {/* メンションピッカー */}
@@ -1217,10 +1514,13 @@ export const LogViewer: React.FC<Props> = ({
                   adjustTextareaHeight();
                 }}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={
-                  replyTarget
+                  isDragging
+                    ? 'ファイルをここにドロップして添付...'
+                    : replyTarget
                     ? `@${replyTarget.authorName} への返信を入力... (Enterで送信, Shift+Enterで改行)`
-                    : `#${channelName} への投稿を入力... (Enterで送信, Shift+Enterで改行)`
+                    : `#${channelName} への投稿を入力... (画像C-v, ファイルD&D/📎, Enterで送信)`
                 }
                 disabled={isSending}
                 className="w-full bg-zinc-900/90 border border-zinc-700/80 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 rounded px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 font-mono resize-none leading-relaxed min-h-[30px] max-h-[120px] transition-all disabled:opacity-50 select-text"
@@ -1231,9 +1531,19 @@ export const LogViewer: React.FC<Props> = ({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={!inputText.trim() || isSending}
+              disabled={
+                (!inputText.trim() && !attachedFiles.some((f) => f.status === 'success')) ||
+                isSending ||
+                attachedFiles.some((f) => f.status === 'uploading')
+              }
               className="shrink-0 p-1.5 mb-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-mono text-xs transition-colors disabled:opacity-30 disabled:hover:bg-emerald-600 flex items-center justify-center min-w-[28px] h-[28px]"
-              title={replyTarget ? '返信を送信 (Enter)' : '投稿を送信 (Enter)'}
+              title={
+                attachedFiles.some((f) => f.status === 'uploading')
+                  ? 'ファイルをアップロード中...'
+                  : replyTarget
+                  ? '返信を送信 (Enter)'
+                  : '投稿を送信 (Enter)'
+              }
             >
               {isSending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
