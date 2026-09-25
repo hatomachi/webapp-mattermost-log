@@ -1,8 +1,9 @@
-import { AppSettings, MattermostUser } from '../types/mattermost';
+import { AppSettings, ChannelSubscriptionMode, MattermostChannelMember, MattermostUser } from '../types/mattermost';
 
 const SETTINGS_KEY = 'matterlog_settings';
 const USER_CACHE_KEY = 'matterlog_user_cache';
 const ACTIVE_CHANNEL_KEY = 'matterlog_active_channel_id';
+const CHANNEL_SUBSCRIPTION_KEY = 'matterlog_channel_subscriptions';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   serverUrl: '',
@@ -103,4 +104,41 @@ export const saveUserCache = (cache: Record<string, MattermostUser>): void => {
   } catch (e) {
     console.error('Failed to save user cache:', e);
   }
+};
+
+export const loadChannelSubscriptions = (): Record<string, ChannelSubscriptionMode> => {
+  try {
+    const raw = localStorage.getItem(CHANNEL_SUBSCRIPTION_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+export const saveChannelSubscriptions = (subs: Record<string, ChannelSubscriptionMode>): void => {
+  try {
+    localStorage.setItem(CHANNEL_SUBSCRIPTION_KEY, JSON.stringify(subs));
+  } catch (e) {
+    console.error('Failed to save channel subscriptions:', e);
+  }
+};
+
+/**
+ * チャンネルの購読モードを取得する。
+ * 1. 本アプリの保存設定があればそれを最優先
+ * 2. なければ Mattermost の notify_props?.mark_unread === 'mention'（公式のミュート）をデフォルトでメンション扱いにする
+ * 3. いずれでもなければ 'all'（通常）
+ */
+export const getEffectiveChannelSubscription = (
+  channelId: string,
+  member?: MattermostChannelMember,
+  savedSubscriptions: Record<string, ChannelSubscriptionMode> = {}
+): ChannelSubscriptionMode => {
+  if (savedSubscriptions[channelId]) {
+    return savedSubscriptions[channelId];
+  }
+  if (member?.notify_props?.mark_unread === 'mention') {
+    return 'mention';
+  }
+  return 'all';
 };

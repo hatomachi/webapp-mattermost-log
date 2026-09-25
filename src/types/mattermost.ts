@@ -86,6 +86,8 @@ export interface MattermostPostListResponse {
 }
 
 export type ChannelSortOrder = 'recent' | 'name';
+export type ChannelSubscriptionMode = 'all' | 'mention';
+export type CatchupTabMode = 'main' | 'mention_only' | 'all';
 
 export interface MattermostChannelMember {
   channel_id: string;

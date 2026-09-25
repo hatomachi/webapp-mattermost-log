@@ -23,6 +23,8 @@ import {
   Reply,
   Bot,
   Check,
+  Bell,
+  BellOff,
 } from 'lucide-react';
 
 interface Props {
@@ -51,6 +53,8 @@ interface Props {
   unreadCount?: number;
   onMarkAsRead?: () => void;
   isMarkingRead?: boolean;
+  isMentionOnly?: boolean;
+  onToggleChannelSubscription?: () => void;
 }
 
 export const LogViewer: React.FC<Props> = ({
@@ -79,6 +83,8 @@ export const LogViewer: React.FC<Props> = ({
   unreadCount = 0,
   onMarkAsRead,
   isMarkingRead = false,
+  isMentionOnly = false,
+  onToggleChannelSubscription,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -554,6 +560,36 @@ export const LogViewer: React.FC<Props> = ({
               <Smile className="w-3 h-3" />
               <span className="hidden sm:inline">{showReactions ? 'スタンプ' : 'スタンプ無'}</span>
               <span className="sm:hidden">{showReactions ? 'スタンプ' : '絵無'}</span>
+            </button>
+          )}
+
+          {onToggleChannelSubscription && (
+            <button
+              onClick={onToggleChannelSubscription}
+              className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] border transition-colors shrink-0 ${
+                isMentionOnly
+                  ? 'bg-amber-950/80 border-amber-600 text-amber-300 font-bold'
+                  : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+              }`}
+              title={
+                isMentionOnly
+                  ? 'メンションのみ追う設定中（クリックで通常追うに変更）'
+                  : '通常追う設定中（クリックでメンションのみ追うに変更）'
+              }
+            >
+              {isMentionOnly ? (
+                <>
+                  <BellOff className="w-3 h-3 text-amber-400" />
+                  <span className="hidden sm:inline">メンションのみ</span>
+                  <span className="sm:hidden">低優先</span>
+                </>
+              ) : (
+                <>
+                  <Bell className="w-3 h-3 text-zinc-400" />
+                  <span className="hidden sm:inline">通常</span>
+                  <span className="sm:hidden">通常</span>
+                </>
+              )}
             </button>
           )}
         </div>

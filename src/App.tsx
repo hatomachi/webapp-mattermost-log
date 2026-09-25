@@ -3,6 +3,7 @@ import {
   AppSettings,
   AppViewMode,
   ChannelSortOrder,
+  ChannelSubscriptionMode,
   MattermostChannel,
   MattermostChannelMember,
   MattermostPost,
@@ -16,6 +17,9 @@ import {
   saveActiveChannelId,
   loadUserCache,
   saveUserCache,
+  loadChannelSubscriptions,
+  saveChannelSubscriptions,
+  getEffectiveChannelSubscription,
 } from './services/storage';
 import {
   getMyTeams,
@@ -55,6 +59,7 @@ export const App: React.FC = () => {
   const [activeChannelId, setActiveChannelId] = useState<string>(loadActiveChannelId);
   const [posts, setPosts] = useState<MattermostPost[]>([]);
   const [userCache, setUserCache] = useState<Record<string, MattermostUser>>(loadUserCache);
+  const [channelSubscriptions, setChannelSubscriptions] = useState<Record<string, ChannelSubscriptionMode>>(loadChannelSubscriptions);
 
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
@@ -205,17 +210,51 @@ export const App: React.FC = () => {
     }
   }, [activeChannelId]);
 
-  // 未読チャンネル数の算出
-  const unreadChannelCount = useMemo(() => {
-    return channels.filter((ch) => {
+  // 未読チャンネル数の算出（メイン未読・メンションのみ低優先未読の分類）
+  const { totalUnreadCount, mainUnreadCount, mentionOnlyUnreadCount } = useMemo(() => {
+    let total = 0;
+    let main = 0;
+    let mentionOnly = 0;
+    channels.forEach((ch) => {
       const m = channelMembers[ch.id];
-      return (
+      const isUnread =
         m &&
         ch.last_post_at > (m.last_viewed_at || 0) &&
-        ch.total_msg_count > (m.msg_count || 0)
-      );
-    }).length;
-  }, [channels, channelMembers]);
+        ch.total_msg_count > (m.msg_count || 0);
+      if (isUnread) {
+        total++;
+        const isMentionOnly =
+          getEffectiveChannelSubscription(ch.id, m, channelSubscriptions) === 'mention';
+        if (!isMentionOnly || (m.mention_count || 0) > 0) {
+          main++;
+        } else {
+          mentionOnly++;
+        }
+      }
+    });
+    return {
+      totalUnreadCount: total,
+      mainUnreadCount: main,
+      mentionOnlyUnreadCount: mentionOnly,
+    };
+  }, [channels, channelMembers, channelSubscriptions]);
+
+  const unreadChannelCount = totalUnreadCount;
+
+  // チャンネル購読モード（通常/メンションのみ）の切り替えハンドラー
+  const handleToggleChannelSubscription = useCallback((channelId: string) => {
+    setChannelSubscriptions((prev) => {
+      const member = channelMembers[channelId];
+      const currentEffective = getEffectiveChannelSubscription(channelId, member, prev);
+      const nextMode: ChannelSubscriptionMode = currentEffective === 'mention' ? 'all' : 'mention';
+      const updated = {
+        ...prev,
+        [channelId]: nextMode,
+      };
+      saveChannelSubscriptions(updated);
+      return updated;
+    });
+  }, [channelMembers]);
 
   // チャンネル既読化ハンドラー（キャッチアップ画面からの既読化通知）
   const handleChannelMarkedAsRead = useCallback((channelId: string) => {
@@ -620,6 +659,17 @@ export const App: React.FC = () => {
     return Math.max(1, activeChannel.total_msg_count - (activeMember.msg_count || 0));
   }, [isCurrentChannelUnread, activeChannel, activeMember]);
 
+  const isCurrentChannelMentionOnly = useMemo(() => {
+    if (!activeChannelId) return false;
+    return (
+      getEffectiveChannelSubscription(
+        activeChannelId,
+        channelMembers[activeChannelId],
+        channelSubscriptions
+      ) === 'mention'
+    );
+  }, [activeChannelId, channelMembers, channelSubscriptions]);
+
   const [isMarkingCurrentChannelRead, setIsMarkingCurrentChannelRead] = useState(false);
 
   // 現在のアクティブチャンネルを既読化
@@ -669,6 +719,8 @@ export const App: React.FC = () => {
         onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
         viewMode={viewMode}
         unreadChannelCount={unreadChannelCount}
+        mainUnreadCount={mainUnreadCount}
+        mentionOnlyUnreadCount={mentionOnlyUnreadCount}
         onToggleViewMode={() => setViewMode((prev) => (prev === 'catchup' ? 'log' : 'catchup'))}
         isAiDrawerOpen={isAiDrawerOpen}
         onToggleAiDrawer={() => setIsAiDrawerOpen((prev) => !prev)}
@@ -676,6 +728,8 @@ export const App: React.FC = () => {
         currentChannelUnreadCount={currentChannelUnreadCount}
         onMarkCurrentChannelAsRead={handleMarkCurrentChannelAsRead}
         isMarkingCurrentChannelRead={isMarkingCurrentChannelRead}
+        isCurrentChannelMentionOnly={isCurrentChannelMentionOnly}
+        onToggleCurrentChannelSubscription={() => activeChannelId && handleToggleChannelSubscription(activeChannelId)}
       />
 
       {/* Error alert banner */}
@@ -707,6 +761,8 @@ export const App: React.FC = () => {
           serverUrl={settings.serverUrl}
           webUrl={settings.webUrl}
           teams={teams}
+          channelSubscriptions={channelSubscriptions}
+          onToggleChannelSubscription={handleToggleChannelSubscription}
         />
 
         {viewMode === 'catchup' ? (
@@ -731,6 +787,8 @@ export const App: React.FC = () => {
             webUrl={settings.webUrl}
             onOpenAiWithUnreads={handleOpenAiForUnreads}
             onOpenAiWithChannelPosts={handleOpenAiForChannelPosts}
+            channelSubscriptions={channelSubscriptions}
+            onToggleChannelSubscription={handleToggleChannelSubscription}
           />
         ) : (
           <LogViewer
@@ -759,6 +817,8 @@ export const App: React.FC = () => {
             unreadCount={currentChannelUnreadCount}
             onMarkAsRead={handleMarkCurrentChannelAsRead}
             isMarkingRead={isMarkingCurrentChannelRead}
+            isMentionOnly={isCurrentChannelMentionOnly}
+            onToggleChannelSubscription={() => activeChannelId && handleToggleChannelSubscription(activeChannelId)}
           />
         )}
       </div>

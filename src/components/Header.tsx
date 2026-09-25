@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppViewMode, MattermostChannel } from '../types/mattermost';
-import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile, ExternalLink, Bot, Check, Loader2 } from 'lucide-react';
+import { Menu, RefreshCw, Settings, Hash, Lock, Users, User, WifiOff, Terminal, WrapText, Sparkles, BookOpen, Smile, ExternalLink, Bot, Check, Loader2, BellOff } from 'lucide-react';
 
 interface Props {
   activeChannel?: MattermostChannel;
@@ -17,6 +17,8 @@ interface Props {
   onToggleSidebar: () => void;
   viewMode: AppViewMode;
   unreadChannelCount: number;
+  mainUnreadCount?: number;
+  mentionOnlyUnreadCount?: number;
   onToggleViewMode: () => void;
   isAiDrawerOpen?: boolean;
   onToggleAiDrawer?: () => void;
@@ -24,6 +26,8 @@ interface Props {
   currentChannelUnreadCount?: number;
   onMarkCurrentChannelAsRead?: () => void;
   isMarkingCurrentChannelRead?: boolean;
+  isCurrentChannelMentionOnly?: boolean;
+  onToggleCurrentChannelSubscription?: () => void;
 }
 
 export const Header: React.FC<Props> = ({
@@ -41,6 +45,8 @@ export const Header: React.FC<Props> = ({
   onToggleSidebar,
   viewMode,
   unreadChannelCount,
+  mainUnreadCount,
+  mentionOnlyUnreadCount = 0,
   onToggleViewMode,
   isAiDrawerOpen = false,
   onToggleAiDrawer,
@@ -48,6 +54,8 @@ export const Header: React.FC<Props> = ({
   currentChannelUnreadCount = 0,
   onMarkCurrentChannelAsRead,
   isMarkingCurrentChannelRead = false,
+  isCurrentChannelMentionOnly = false,
+  onToggleCurrentChannelSubscription,
 }) => {
   const getChannelIcon = (type?: string) => {
     switch (type) {
@@ -119,6 +127,15 @@ export const Header: React.FC<Props> = ({
                 {activeChannel.display_name || activeChannel.name}
               </span>
             )}
+            {isCurrentChannelMentionOnly && (
+              <span
+                className="text-[10px] bg-amber-950/80 border border-amber-800 text-amber-300 px-1 py-0.2 rounded font-semibold shrink-0 flex items-center space-x-0.5"
+                title="このチャンネルは「メンションのみ追う」設定です"
+              >
+                <BellOff className="w-2.5 h-2.5 text-amber-400" />
+                <span className="hidden sm:inline">低優先</span>
+              </span>
+            )}
             {isCurrentChannelUnread && onMarkCurrentChannelAsRead && (
               <button
                 onClick={onMarkCurrentChannelAsRead}
@@ -170,22 +187,27 @@ export const Header: React.FC<Props> = ({
           <button
             onClick={onToggleViewMode}
             className={`flex items-center space-x-1 text-[11px] px-2 py-1 rounded border transition-colors ${
-              unreadChannelCount > 0
+              (mainUnreadCount ?? unreadChannelCount) > 0
                 ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-700 text-emerald-300 font-bold shadow-xs'
+                : mentionOnlyUnreadCount > 0
+                ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-700/80 text-amber-300 font-semibold shadow-xs'
                 : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-400'
             }`}
-            title="未読チャンネルの一括キャッチアップビューを開く"
+            title={`未読チャンネルの一括キャッチアップビューを開く (メイン未読: ${mainUnreadCount ?? unreadChannelCount}件 / メンションのみ: ${mentionOnlyUnreadCount}件)`}
           >
-            <Sparkles className={`w-3 h-3 ${unreadChannelCount > 0 ? 'text-emerald-400 animate-pulse' : 'text-zinc-500'}`} />
+            <Sparkles className={`w-3 h-3 ${(mainUnreadCount ?? unreadChannelCount) > 0 ? 'text-emerald-400 animate-pulse' : mentionOnlyUnreadCount > 0 ? 'text-amber-400' : 'text-zinc-500'}`} />
             <span>未読</span>
             <span
-              className={`text-[9px] px-1 py-0.1 rounded-full ${
-                unreadChannelCount > 0
+              className={`text-[9px] px-1 py-0.1 rounded-full font-bold ${
+                (mainUnreadCount ?? unreadChannelCount) > 0
                   ? 'bg-emerald-800 text-white'
+                  : mentionOnlyUnreadCount > 0
+                  ? 'bg-amber-800 text-amber-100'
                   : 'bg-zinc-800 text-zinc-500'
               }`}
             >
-              {unreadChannelCount}
+              {mainUnreadCount ?? unreadChannelCount}
+              {mentionOnlyUnreadCount > 0 ? `+${mentionOnlyUnreadCount}` : ''}
             </span>
           </button>
         )}

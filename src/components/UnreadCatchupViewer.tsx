@@ -6,6 +6,8 @@ import {
   MattermostUser,
   MattermostFileInfo,
   MattermostTeam,
+  CatchupTabMode,
+  ChannelSubscriptionMode,
 } from '../types/mattermost';
 import {
   getChannelPosts,
@@ -17,6 +19,7 @@ import {
   formatEmojiDisplay,
   buildMattermostChannelUrl,
 } from '../services/mattermost';
+import { getEffectiveChannelSubscription } from '../services/storage';
 import {
   Check,
   CheckCheck,
@@ -35,6 +38,8 @@ import {
   AtSign,
   BookOpen,
   Bot,
+  Bell,
+  BellOff,
 } from 'lucide-react';
 
 interface Props {
@@ -58,6 +63,8 @@ interface Props {
   webUrl?: string;
   onOpenAiWithUnreads?: (unreadItems: Array<{ channel: MattermostChannel; posts: MattermostPost[]; unreadCount: number }>) => void;
   onOpenAiWithChannelPosts?: (channel: MattermostChannel, posts: MattermostPost[]) => void;
+  channelSubscriptions?: Record<string, ChannelSubscriptionMode>;
+  onToggleChannelSubscription?: (channelId: string) => void;
 }
 
 interface UnreadChannelItem {
@@ -65,6 +72,7 @@ interface UnreadChannelItem {
   member: MattermostChannelMember;
   unreadCount: number;
   mentionCount: number;
+  isMentionOnly: boolean;
 }
 
 interface ChannelCatchupState {
@@ -72,6 +80,7 @@ interface ChannelCatchupState {
   member: MattermostChannelMember;
   unreadCount: number;
   mentionCount: number;
+  isMentionOnly: boolean;
   posts: MattermostPost[];
   isLoading: boolean;
   isRead: boolean;
@@ -100,10 +109,14 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   webUrl,
   onOpenAiWithUnreads,
   onOpenAiWithChannelPosts,
+  channelSubscriptions = {},
+  onToggleChannelSubscription,
 }) => {
   const [channelStates, setChannelStates] = useState<Record<string, ChannelCatchupState>>({});
+  const [activeTab, setActiveTab] = useState<CatchupTabMode>('main');
   const [isInitializing, setIsInitializing] = useState(true);
   const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
+  const [isMarkingMentionOnlyRead, setIsMarkingMentionOnlyRead] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // 関数・プロパティを ref に保持して useEffect の不要な再実行を防ぐ
@@ -139,19 +152,18 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
         if (!isUnread) return null;
 
         const unreadCount = Math.max(0, ch.total_msg_count - (member.msg_count || 0));
+        const isMentionOnly =
+          getEffectiveChannelSubscription(ch.id, member, channelSubscriptions) === 'mention';
+
         return {
           channel: ch,
           member,
           unreadCount: unreadCount > 0 ? unreadCount : 1,
           mentionCount: member.mention_count || 0,
+          isMentionOnly,
         };
       })
-      .filter((item): item is {
-        channel: MattermostChannel;
-        member: MattermostChannelMember;
-        unreadCount: number;
-        mentionCount: number;
-      } => item !== null)
+      .filter((item): item is UnreadChannelItem => item !== null)
       .sort((a, b) => {
         // メンションがあるものを最優先、次に最新更新順
         if (a.mentionCount !== b.mentionCount) {
@@ -159,7 +171,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
         }
         return b.channel.last_post_at - a.channel.last_post_at;
       });
-  }, [channels, channelMembers]);
+  }, [channels, channelMembers, channelSubscriptions]);
 
   // unreadChannels を ref で保持
   const unreadChannelsRef = useRef<UnreadChannelItem[]>(unreadChannels);
@@ -174,12 +186,13 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
       setIsInitializing(true);
 
       const initialStates: Record<string, ChannelCatchupState> = {};
-      currentUnreads.forEach(({ channel, member, unreadCount, mentionCount }: UnreadChannelItem) => {
+      currentUnreads.forEach(({ channel, member, unreadCount, mentionCount, isMentionOnly }: UnreadChannelItem) => {
         initialStates[channel.id] = {
           channel,
           member,
           unreadCount,
           mentionCount,
+          isMentionOnly,
           posts: [],
           isLoading: true,
           isRead: false,
@@ -327,19 +340,70 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     }
   };
 
-  // 4. すべての未読を一括既読化
-  const handleMarkAllAsRead = async () => {
-    const activeUnreads = Object.values(channelStates).filter((s) => !s.isRead);
-    if (activeUnreads.length === 0) return;
+  // channelSubscriptions が変更されたら channelStates の isMentionOnly も動的同期
+  useEffect(() => {
+    setChannelStates((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      Object.keys(next).forEach((id) => {
+        const item = next[id];
+        const currentIsMention =
+          getEffectiveChannelSubscription(item.channel.id, item.member, channelSubscriptions) === 'mention';
+        if (item.isMentionOnly !== currentIsMention) {
+          next[id] = { ...item, isMentionOnly: currentIsMention };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [channelSubscriptions]);
 
-    if (!window.confirm(`表示中の未読 ${activeUnreads.length} チャンネルをすべて既読にしますか？`)) {
+  // まだ既読になっていない全未読チャンネル
+  const activeChannelListAll = useMemo(() => {
+    return Object.values(channelStates).filter((s) => !s.isRead);
+  }, [channelStates]);
+
+  // メイン未読リスト: 「通常チャンネル」または「メンションのみ設定だがメンションがあるチャンネル」
+  const mainUnreadList = useMemo(() => {
+    return activeChannelListAll.filter((s) => !s.isMentionOnly || s.mentionCount > 0);
+  }, [activeChannelListAll]);
+
+  // メンションのみ（低優先）リスト: 「メンションのみ設定かつメンションがないチャンネル」
+  const mentionOnlyUnreadList = useMemo(() => {
+    return activeChannelListAll.filter((s) => s.isMentionOnly && s.mentionCount === 0);
+  }, [activeChannelListAll]);
+
+  // 現在のタブに応じた表示チャンネルリスト
+  const displayedChannelList = useMemo(() => {
+    if (activeTab === 'main') return mainUnreadList;
+    if (activeTab === 'mention_only') return mentionOnlyUnreadList;
+    return activeChannelListAll;
+  }, [activeTab, mainUnreadList, mentionOnlyUnreadList, activeChannelListAll]);
+
+  const totalRemainingUnreads = useMemo(() => {
+    return displayedChannelList.reduce((acc, cur) => acc + (cur.unreadCount || 1), 0);
+  }, [displayedChannelList]);
+
+  // 4. 現在表示中タブの未読を一括既読化
+  const handleMarkAllAsRead = async () => {
+    const targets = displayedChannelList;
+    if (targets.length === 0) return;
+
+    const tabLabel =
+      activeTab === 'main'
+        ? 'メイン未読'
+        : activeTab === 'mention_only'
+        ? 'メンションのみ（低優先）'
+        : 'すべての未読';
+
+    if (!window.confirm(`${tabLabel} ${targets.length} チャンネルをすべて既読にしますか？`)) {
       return;
     }
 
     setIsMarkingAllRead(true);
     try {
       await Promise.all(
-        activeUnreads.map(async (s) => {
+        targets.map(async (s) => {
           try {
             await viewChannel(serverUrl, token, s.channel.id, '', corsProxy);
             onChannelMarkedAsRead(s.channel.id);
@@ -351,8 +415,10 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
 
       setChannelStates((prev) => {
         const next = { ...prev };
-        Object.keys(next).forEach((id) => {
-          next[id] = { ...next[id], isRead: true };
+        targets.forEach((s) => {
+          if (next[s.channel.id]) {
+            next[s.channel.id] = { ...next[s.channel.id], isRead: true };
+          }
         });
         return next;
       });
@@ -361,14 +427,41 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     }
   };
 
-  // 表示対象のチャンネル（未読または既読処理中のもの）
-  const activeChannelList = useMemo(() => {
-    return Object.values(channelStates).filter((s) => !s.isRead);
-  }, [channelStates]);
+  // 5. メンションのみ（低優先）未読チャンネルのみを一括既読化（メインタブからの一発一掃ボタン）
+  const handleMarkMentionOnlyAsRead = async () => {
+    const targets = mentionOnlyUnreadList;
+    if (targets.length === 0) return;
 
-  const totalRemainingUnreads = useMemo(() => {
-    return activeChannelList.reduce((acc, cur) => acc + (cur.unreadCount || 1), 0);
-  }, [activeChannelList]);
+    if (!window.confirm(`「メンションのみ追う」設定の未読 ${targets.length} チャンネルをすべて既読にしますか？`)) {
+      return;
+    }
+
+    setIsMarkingMentionOnlyRead(true);
+    try {
+      await Promise.all(
+        targets.map(async (s) => {
+          try {
+            await viewChannel(serverUrl, token, s.channel.id, '', corsProxy);
+            onChannelMarkedAsRead(s.channel.id);
+          } catch (e) {
+            console.warn(`Failed to mark mention-only channel ${s.channel.id} as read:`, e);
+          }
+        })
+      );
+
+      setChannelStates((prev) => {
+        const next = { ...prev };
+        targets.forEach((s) => {
+          if (next[s.channel.id]) {
+            next[s.channel.id] = { ...next[s.channel.id], isRead: true };
+          }
+        });
+        return next;
+      });
+    } finally {
+      setIsMarkingMentionOnlyRead(false);
+    }
+  };
 
   const formatTime = (timestamp: number) => {
     const d = new Date(timestamp);
@@ -549,7 +642,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
             <span className="font-bold text-xs text-zinc-100">未読キャッチアップ</span>
             <span className="text-[10px] bg-emerald-950 border border-emerald-800 text-emerald-300 px-1.5 py-0.2 rounded-full font-bold">
-              {activeChannelList.length} チャンネル / {totalRemainingUnreads} 件
+              {displayedChannelList.length} ch / {totalRemainingUnreads} 件
             </span>
           </div>
         </div>
@@ -565,10 +658,10 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
             <span className="hidden sm:inline">再検出</span>
           </button>
 
-          {onOpenAiWithUnreads && activeChannelList.length > 0 && (
+          {onOpenAiWithUnreads && displayedChannelList.length > 0 && (
             <button
               onClick={() => {
-                const items = activeChannelList.map((s) => ({
+                const items = displayedChannelList.map((s) => ({
                   channel: s.channel,
                   posts: s.posts,
                   unreadCount: s.unreadCount,
@@ -583,51 +676,157 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
             </button>
           )}
 
-          {activeChannelList.length > 0 && (
+          {displayedChannelList.length > 0 && (
             <button
               onClick={handleMarkAllAsRead}
               disabled={isMarkingAllRead}
               className="flex items-center space-x-1 text-[11px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-2.5 py-1 rounded transition-colors disabled:opacity-50"
-              title="すべての未読チャンネルを既読にする"
+              title={`${activeTab === 'main' ? 'メイン未読' : activeTab === 'mention_only' ? 'メンションのみ未読' : 'すべての未読'}を既読にする`}
             >
               {isMarkingAllRead ? (
                 <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
               ) : (
                 <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
               )}
-              <span>すべて既読</span>
+              <span>{activeTab === 'main' ? 'メインをすべて既読' : activeTab === 'mention_only' ? '低優先をすべて既読' : 'すべて既読'}</span>
             </button>
           )}
         </div>
       </div>
 
+      {/* Sub Header: Catchup Tabs & Quick Mute Actions */}
+      <div className="h-9 bg-zinc-900/60 border-b border-zinc-800/80 px-3 flex items-center justify-between shrink-0 select-none text-xs">
+        {/* Tabs */}
+        <div className="flex items-center space-x-1">
+          <button
+            onClick={() => setActiveTab('main')}
+            className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center space-x-1.5 transition-colors border ${
+              activeTab === 'main'
+                ? 'bg-emerald-950/90 border-emerald-700/80 text-emerald-300 font-bold'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+            }`}
+          >
+            <span>メイン未読</span>
+            <span
+              className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                mainUnreadList.length > 0
+                  ? 'bg-emerald-800 text-white'
+                  : 'bg-zinc-800 text-zinc-500'
+              }`}
+            >
+              {mainUnreadList.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('mention_only')}
+            className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center space-x-1.5 transition-colors border ${
+              activeTab === 'mention_only'
+                ? 'bg-amber-950/90 border-amber-700/80 text-amber-300 font-bold'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+            }`}
+          >
+            <BellOff className="w-3 h-3 text-amber-400" />
+            <span>メンションのみ</span>
+            <span
+              className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                mentionOnlyUnreadList.length > 0
+                  ? 'bg-amber-800 text-amber-100'
+                  : 'bg-zinc-800 text-zinc-500'
+              }`}
+            >
+              {mentionOnlyUnreadList.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('all')}
+            className={`hidden sm:flex px-2 py-0.5 rounded text-[11px] font-semibold items-center space-x-1.5 transition-colors border ${
+              activeTab === 'all'
+                ? 'bg-zinc-800 border-zinc-700 text-zinc-100 font-bold'
+                : 'border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
+            }`}
+          >
+            <span>すべて</span>
+            <span className="text-[9px] bg-zinc-800 text-zinc-400 px-1.5 py-0.2 rounded-full">
+              {activeChannelListAll.length}
+            </span>
+          </button>
+        </div>
+
+        {/* Quick Action: メインタブ表示時に低優先未読を一発全既読にするボタン */}
+        {activeTab === 'main' && mentionOnlyUnreadList.length > 0 && (
+          <button
+            onClick={handleMarkMentionOnlyAsRead}
+            disabled={isMarkingMentionOnlyRead}
+            className="flex items-center space-x-1 text-[10px] sm:text-[11px] text-amber-400/90 hover:text-amber-300 bg-amber-950/40 hover:bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded transition-colors disabled:opacity-50"
+            title="「メンションのみ追う」設定のチャンネルをすべて一発で既読にします"
+          >
+            {isMarkingMentionOnlyRead ? (
+              <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+            ) : (
+              <BellOff className="w-3 h-3 text-amber-400" />
+            )}
+            <span>低優先({mentionOnlyUnreadList.length})を一括既読</span>
+          </button>
+        )}
+      </div>
+
       {/* Main Scroll Content */}
       <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-4">
-        {isInitializing && activeChannelList.length === 0 ? (
+        {isInitializing && displayedChannelList.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-zinc-400 space-y-2">
             <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
             <p className="text-xs">未読チャンネルと投稿を読み込み中...</p>
           </div>
-        ) : activeChannelList.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center space-y-3">
+        ) : displayedChannelList.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center space-y-3 px-4">
             <div className="w-12 h-12 rounded-full bg-emerald-950/60 border border-emerald-700/60 flex items-center justify-center text-emerald-400 shadow-lg">
               <Sparkles className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm font-bold text-zinc-200">すべての未読を読み終えました！</p>
-              <p className="text-xs text-zinc-500 mt-1">
-                現在、新着メッセージのある未読チャンネルはありません。
+              <p className="text-sm font-bold text-zinc-200">
+                {activeTab === 'main'
+                  ? 'メインの未読メッセージはありません！'
+                  : activeTab === 'mention_only'
+                  ? 'メンション待ちの未読はありません'
+                  : 'すべての未読を読み終えました！'}
+              </p>
+              <p className="text-xs text-zinc-500 mt-1 max-w-sm">
+                {activeTab === 'main' && mentionOnlyUnreadList.length > 0
+                  ? `「メンション以外は追わない」設定の未読が ${mentionOnlyUnreadList.length} チャンネルあります。別タブで確認するか、一括既読にできます。`
+                  : '現在、このタブに未読メッセージはありません。'}
               </p>
             </div>
-            <button
-              onClick={onClose}
-              className="mt-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-1.5 rounded shadow transition-colors"
-            >
-              通常ログ閲覧に戻る
-            </button>
+
+            {activeTab === 'main' && mentionOnlyUnreadList.length > 0 ? (
+              <div className="flex items-center space-x-2 mt-2">
+                <button
+                  onClick={() => setActiveTab('mention_only')}
+                  className="bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300 text-xs px-3 py-1.5 rounded transition-colors flex items-center space-x-1"
+                >
+                  <BellOff className="w-3.5 h-3.5" />
+                  <span>メンションのみ ({mentionOnlyUnreadList.length}) を確認</span>
+                </button>
+                <button
+                  onClick={handleMarkMentionOnlyAsRead}
+                  disabled={isMarkingMentionOnlyRead}
+                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-xs px-3 py-1.5 rounded transition-colors"
+                >
+                  一括既読にする
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={onClose}
+                className="mt-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-1.5 rounded shadow transition-colors"
+              >
+                通常ログ閲覧に戻る
+              </button>
+            )}
           </div>
         ) : (
-          activeChannelList.map((state) => {
+          displayedChannelList.map((state) => {
             const { channel, posts, isLoading, isMarkingRead, unreadCount, mentionCount, error } =
               state;
             const mmUrl = buildMattermostChannelUrl(serverUrl, channel, teams, webUrl);
@@ -679,9 +878,45 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                         <span>{mentionCount}</span>
                       </span>
                     )}
+
+                    {/* Low priority badge */}
+                    {state.isMentionOnly && (
+                      <span className="flex items-center space-x-0.5 text-[10px] bg-amber-950/80 border border-amber-800 text-amber-300 px-1.5 py-0.2 rounded shrink-0 font-semibold">
+                        <BellOff className="w-2.5 h-2.5 text-amber-400" />
+                        <span className="hidden sm:inline">低優先</span>
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center space-x-2 shrink-0">
+                    {onToggleChannelSubscription && (
+                      <button
+                        onClick={() => onToggleChannelSubscription(channel.id)}
+                        className={`text-[11px] p-1 rounded flex items-center space-x-1 border transition-colors ${
+                          state.isMentionOnly
+                            ? 'bg-amber-950/70 border-amber-700/80 text-amber-300 hover:bg-amber-900'
+                            : 'bg-zinc-800/80 border-zinc-700/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+                        }`}
+                        title={
+                          state.isMentionOnly
+                            ? '現在「メンションのみ追う」設定（クリックで通常追うに変更）'
+                            : '現在「通常追う」設定（クリックでメンションのみ追うに変更）'
+                        }
+                      >
+                        {state.isMentionOnly ? (
+                          <>
+                            <BellOff className="w-3 h-3 text-amber-400" />
+                            <span className="hidden md:inline">メンションのみ</span>
+                          </>
+                        ) : (
+                          <>
+                            <Bell className="w-3 h-3 text-zinc-400" />
+                            <span className="hidden md:inline">通常</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
                     {onOpenAiWithChannelPosts && posts.length > 0 && (
                       <button
                         onClick={() => onOpenAiWithChannelPosts(channel, posts)}
