@@ -27,6 +27,7 @@ import {
   Clock,
   RefreshCw,
   ChevronLeft,
+  Eye,
 } from 'lucide-react';
 import { AppSettings } from '../../types/mattermost';
 import {
@@ -40,6 +41,7 @@ import {
 } from '../../features/ai/aiRemoteTypes';
 import { QUICK_PROMPTS, QuickPrompt } from '../../features/ai/mattermostAiAdapter';
 import { useAiRemoteClient } from '../../features/ai/useAiRemoteClient';
+import { ContextAttachmentModal } from './ContextAttachmentModal';
 
 interface Props {
   isOpen: boolean;
@@ -173,6 +175,7 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [activeAttachments, setActiveAttachments] = useState<ContextAttachment[]>([]);
+  const [previewAttachment, setPreviewAttachment] = useState<ContextAttachment | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [appliedId, setAppliedId] = useState<string | null>(null);
   const [statusText, setStatusText] = useState<string | null>(null);
@@ -1140,14 +1143,18 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                   {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
                     <div className="flex flex-wrap gap-1 mb-1">
                       {msg.attachments.map((att) => (
-                        <span
+                        <button
                           key={att.id}
-                          className="inline-flex items-center space-x-1 text-[10px] bg-zinc-900 border border-zinc-700/80 text-emerald-300 px-1.5 py-0.5 rounded font-mono"
+                          type="button"
+                          onClick={() => setPreviewAttachment(att)}
+                          className="inline-flex items-center space-x-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 hover:border-emerald-500/70 text-emerald-300 hover:text-emerald-200 px-1.5 py-0.5 rounded font-mono transition-colors group cursor-pointer"
+                          title="クリックして送信時の添付ログ内容をプレビュー・コピー"
                         >
                           <span>📎</span>
-                          <span className="font-semibold">{att.title}</span>
+                          <span className="font-semibold underline decoration-dotted underline-offset-2">{att.title}</span>
                           {att.badge && <span className="text-emerald-400/80">({att.badge})</span>}
-                        </span>
+                          <Eye className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100 text-emerald-400 ml-0.5" />
+                        </button>
                       ))}
                     </div>
                   )}
@@ -1239,19 +1246,29 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
                 activeAttachments.map((att) => (
                   <div
                     key={att.id}
-                    className="flex items-center space-x-1.5 bg-emerald-950/80 border border-emerald-700/70 rounded px-2 py-0.5 text-xs text-emerald-300 font-sans"
+                    className="flex items-center space-x-1 bg-emerald-950/80 border border-emerald-700/70 hover:border-emerald-500 rounded px-1.5 py-0.5 text-xs text-emerald-300 font-sans transition-colors group"
                   >
-                    <span className="text-[11px]">📎</span>
-                    <span className="font-semibold text-[11px] truncate max-w-[180px]">{att.title}</span>
-                    {att.badge && (
-                      <span className="text-[9px] bg-emerald-900/90 text-emerald-200 px-1 rounded">
-                        {att.badge}
+                    <button
+                      type="button"
+                      onClick={() => setPreviewAttachment(att)}
+                      className="flex items-center space-x-1 hover:text-white cursor-pointer transition-colors text-left"
+                      title="クリックして添付ログ内容をプレビュー・検索・コピー"
+                    >
+                      <span className="text-[11px]">📎</span>
+                      <span className="font-semibold text-[11px] truncate max-w-[170px] underline decoration-dotted underline-offset-2">
+                        {att.title}
                       </span>
-                    )}
+                      {att.badge && (
+                        <span className="text-[9px] bg-emerald-900/90 text-emerald-200 px-1 rounded">
+                          {att.badge}
+                        </span>
+                      )}
+                      <Eye className="w-2.5 h-2.5 text-emerald-400 opacity-70 group-hover:opacity-100 ml-0.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleRemoveAttachment(att.id)}
-                      className="text-emerald-400 hover:text-emerald-100 hover:bg-emerald-900 rounded p-0.5 ml-0.5"
+                      className="text-emerald-400 hover:text-emerald-100 hover:bg-emerald-900 rounded p-0.5 ml-1 cursor-pointer"
                       title="添付を解除"
                     >
                       <X className="w-3 h-3" />
@@ -1429,6 +1446,13 @@ export const AiRemoteChatDrawer: React.FC<Props> = ({
           </div>
         </div>
       )}
+
+      {/* Context Attachment Preview Modal */}
+      <ContextAttachmentModal
+        isOpen={Boolean(previewAttachment)}
+        attachment={previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+      />
     </div>
   );
 };

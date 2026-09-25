@@ -5,8 +5,14 @@
  * into rich Markdown context suitable for LLM reasoning and code agents (Claude Code).
  */
 
-import { MattermostPost, MattermostUser, MattermostChannel } from '../../types/mattermost';
-import { formatUserDisplayName, formatFileSize, getPostReactions, getGroupedReactions } from '../../services/mattermost';
+import { MattermostPost, MattermostUser, MattermostChannel, MattermostTeam } from '../../types/mattermost';
+import {
+  formatUserDisplayName,
+  formatFileSize,
+  getPostReactions,
+  getGroupedReactions,
+  buildMattermostChannelUrl,
+} from '../../services/mattermost';
 import { ContextAttachment } from './aiRemoteTypes';
 
 export interface ContextFile {
@@ -74,7 +80,8 @@ function formatFullTimestamp(timestamp: number): string {
 }
 
 /**
- * Format a single Mattermost post into a Markdown line/block
+ * Format a single Mattermost post into a Markdown line/block.
+ * Appends compact ID metadata so LLM / agent can trace via API without cluttering visual layout.
  */
 function formatPostBlock(
   post: MattermostPost,
@@ -85,7 +92,12 @@ function formatPostBlock(
   const authorName = user ? formatUserDisplayName(user) : `@${post.props?.override_username || post.user_id || 'unknown'}`;
   const timeStr = formatFullTimestamp(post.create_at);
 
-  let output = `${indent}[${timeStr}] **${authorName}**:\n`;
+  // Compact ID annotation for API tracking (avoids verbose URLs on every line)
+  const idMeta = post.root_id
+    ? `[id: ${post.id}, root: ${post.root_id}]`
+    : `[id: ${post.id}]`;
+
+  let output = `${indent}[${timeStr}] **${authorName}** ${idMeta}:\n`;
 
   // Indent message lines
   const messageLines = (post.message || '(空のメッセージ)').split('\n');
@@ -110,16 +122,12 @@ function formatPostBlock(
     output += `${indent}> 🏷️ [リアクション: ${reactionList}]\n`;
   }
 
-  // Reply count hint if not expanded
-  if (post.reply_count && post.reply_count > 0 && !indent) {
-    output += `${indent}> 💬 (${post.reply_count}件のスレッド返信あり)\n`;
-  }
-
   return output;
 }
 
 /**
- * Format channel posts into clean Markdown
+ * Format channel posts into clean Markdown.
+ * Correctly gathers thread replies without dropping them even if unexpanded in the UI.
  */
 export function formatChannelLogsToMarkdown(params: {
   channel?: MattermostChannel;
@@ -127,44 +135,87 @@ export function formatChannelLogsToMarkdown(params: {
   userCache: Record<string, MattermostUser>;
   threadPosts?: Record<string, MattermostPost[]>;
   maxPosts?: number;
+  serverUrl?: string;
+  webUrl?: string;
+  teams?: MattermostTeam[];
 }): ContextFile {
-  const { channel, posts, userCache, threadPosts = {}, maxPosts = 60 } = params;
-  const channelDisplayName = channel?.display_name || channel?.name || 'unknown-channel';
-  const teamName = channel?.team_display_name || channel?.team_name || 'default-team';
+  const {
+    channel,
+    posts,
+    userCache,
+    threadPosts = {},
+    maxPosts = 100,
+    serverUrl,
+    webUrl,
+    teams,
+  } = params;
 
-  // Sort chronological (oldest to newest)
+  const channelDisplayName = channel?.display_name || channel?.name || 'unknown-channel';
+  const teamName = channel?.team_display_name || channel?.team_name || (teams && teams[0]?.name) || 'default-team';
+  const channelUrl = buildMattermostChannelUrl(serverUrl, channel, teams, webUrl);
+  const baseUrl = (webUrl && webUrl.trim() !== '') ? webUrl.trim().replace(/\/+$/, '') : (serverUrl || '').trim().replace(/\/+$/, '');
+  const permalinkFormat = baseUrl ? `${baseUrl}/${teamName}/pl/{post_id}` : '/pl/{post_id}';
+
+  // Sort chronological (oldest to newest) and slice up to maxPosts
   const sorted = [...posts].sort((a, b) => a.create_at - b.create_at).slice(-maxPosts);
+
+  // Group all thread replies present within the current batch by their root_id
+  const repliesByRootId: Record<string, MattermostPost[]> = {};
+  for (const p of sorted) {
+    if (p.root_id) {
+      if (!repliesByRootId[p.root_id]) {
+        repliesByRootId[p.root_id] = [];
+      }
+      repliesByRootId[p.root_id].push(p);
+    }
+  }
+
+  const startDateStr = sorted.length > 0 ? formatFullTimestamp(sorted[0].create_at) : 'なし';
+  const endDateStr = sorted.length > 0 ? formatFullTimestamp(sorted[sorted.length - 1].create_at) : 'なし';
 
   let md = `# Mattermost Channel Log: #${channelDisplayName} (${teamName})\n\n`;
   md += `- 取得日時: ${formatFullTimestamp(Date.now())}\n`;
-  md += `- チャンネル名: #${channelDisplayName} (ID: ${channel?.id || 'unknown'})\n`;
+  md += `- チャンネル名: #${channelDisplayName}\n`;
+  md += `- チャンネルID: ${channel?.id || 'unknown'}\n`;
+  if (channelUrl) md += `- チャンネルURL: ${channelUrl}\n`;
+  if (channel?.id) md += `- APIエンドポイント: /api/v4/channels/${channel.id}/posts\n`;
+  md += `- パーマリンク形式: ${permalinkFormat}\n`;
+  md += `- ログ表示範囲: ${startDateStr} 〜 ${endDateStr} (取得${sorted.length}件 / 全${posts.length}件)\n`;
   if (channel?.header) md += `- ヘッダー: ${channel.header}\n`;
   if (channel?.purpose) md += `- 目的: ${channel.purpose}\n`;
-  md += `- 投稿件数: ${sorted.length}件\n\n`;
-  md += `---\n\n`;
+  md += `\n---\n\n`;
 
   for (const post of sorted) {
-    // If it's a reply in a thread and root post is in list, we will show it under root
+    // If it's a reply in a thread and its root post is in the list, we will render it grouped under the root post.
     if (post.root_id && sorted.some((p) => p.id === post.root_id)) {
       continue;
     }
 
+    // Output root post (or orphaned reply whose root is older than maxPosts)
     md += formatPostBlock(post, userCache);
 
-    // If there are thread replies in cache, append them
-    const replies = threadPosts[post.id] || [];
-    if (replies.length > 0) {
-      const sortedReplies = [...replies]
-        .filter((r) => r.id !== post.id)
-        .sort((a, b) => a.create_at - b.create_at);
+    // Merge replies from cache (threadPosts) and current sorted batch without duplicates
+    const cachedReplies = threadPosts[post.id] || [];
+    const batchReplies = repliesByRootId[post.id] || [];
 
-      if (sortedReplies.length > 0) {
-        md += `  > 💬 **--- スレッド返信 (${sortedReplies.length}件) ---**\n`;
-        for (const reply of sortedReplies) {
-          md += formatPostBlock(reply, userCache, '  ');
-        }
-        md += `  > 💬 **--- スレッド終了 ---**\n`;
+    const replyMap = new Map<string, MattermostPost>();
+    for (const r of cachedReplies) {
+      if (r.id !== post.id) replyMap.set(r.id, r);
+    }
+    for (const r of batchReplies) {
+      if (r.id !== post.id) replyMap.set(r.id, r);
+    }
+
+    const mergedReplies = Array.from(replyMap.values()).sort((a, b) => a.create_at - b.create_at);
+
+    if (mergedReplies.length > 0) {
+      md += `  > 💬 **--- スレッド返信 (${mergedReplies.length}件) ---**\n`;
+      for (const reply of mergedReplies) {
+        md += formatPostBlock(reply, userCache, '  ');
       }
+      md += `  > 💬 **--- スレッド終了 ---**\n`;
+    } else if (post.reply_count && post.reply_count > 0) {
+      md += `  > 💬 *(${post.reply_count}件のスレッド返信あり / 本文未取得)*\n`;
     }
 
     md += '\n';
@@ -189,12 +240,21 @@ export function formatThreadLogsToMarkdown(params: {
   rootPost: MattermostPost;
   replies: MattermostPost[];
   userCache: Record<string, MattermostUser>;
+  serverUrl?: string;
+  webUrl?: string;
+  teams?: MattermostTeam[];
 }): ContextFile {
-  const { channel, rootPost, replies, userCache } = params;
+  const { channel, rootPost, replies, userCache, serverUrl, webUrl, teams } = params;
   const channelDisplayName = channel?.display_name || channel?.name || 'unknown-channel';
+  const teamName = channel?.team_display_name || channel?.team_name || (teams && teams[0]?.name) || 'default-team';
+  const baseUrl = (webUrl && webUrl.trim() !== '') ? webUrl.trim().replace(/\/+$/, '') : (serverUrl || '').trim().replace(/\/+$/, '');
+  const permalinkUrl = baseUrl ? `${baseUrl}/${teamName}/pl/${rootPost.id}` : '';
 
-  let md = `# Mattermost Thread: #${channelDisplayName}\n\n`;
+  let md = `# Mattermost Thread: #${channelDisplayName} (${teamName})\n\n`;
   md += `- スレッド親投稿ID: ${rootPost.id}\n`;
+  md += `- チャンネルID: ${channel?.id || rootPost.channel_id || 'unknown'}\n`;
+  if (permalinkUrl) md += `- スレッドURL: ${permalinkUrl}\n`;
+  md += `- APIエンドポイント: /api/v4/posts/${rootPost.id}/thread\n`;
   md += `- 取得日時: ${formatFullTimestamp(Date.now())}\n`;
   md += `- 返信件数: ${replies.length}件\n\n`;
   md += `---\n\n`;
@@ -235,10 +295,13 @@ export function formatChannelLogsToAttachment(params: {
   userCache: Record<string, MattermostUser>;
   threadPosts?: Record<string, MattermostPost[]>;
   maxPosts?: number;
+  serverUrl?: string;
+  webUrl?: string;
+  teams?: MattermostTeam[];
 }): ContextAttachment {
-  const { channel, posts, userCache, threadPosts, maxPosts = 60 } = params;
+  const { channel, posts, userCache, threadPosts, maxPosts = 100, serverUrl, webUrl, teams } = params;
   const channelDisplayName = channel?.display_name || channel?.name || 'チャンネル';
-  const file = formatChannelLogsToMarkdown({ channel, posts, userCache, threadPosts, maxPosts });
+  const file = formatChannelLogsToMarkdown({ channel, posts, userCache, threadPosts, maxPosts, serverUrl, webUrl, teams });
   const sorted = [...posts].slice(-maxPosts);
 
   return {
@@ -259,10 +322,13 @@ export function formatThreadLogsToAttachment(params: {
   rootPost: MattermostPost;
   replies: MattermostPost[];
   userCache: Record<string, MattermostUser>;
+  serverUrl?: string;
+  webUrl?: string;
+  teams?: MattermostTeam[];
 }): ContextAttachment {
-  const { channel, rootPost, replies, userCache } = params;
+  const { channel, rootPost, replies, userCache, serverUrl, webUrl, teams } = params;
   const channelDisplayName = channel?.display_name || channel?.name || 'チャンネル';
-  const file = formatThreadLogsToMarkdown({ channel, rootPost, replies, userCache });
+  const file = formatThreadLogsToMarkdown({ channel, rootPost, replies, userCache, serverUrl, webUrl, teams });
   const user = userCache[rootPost.user_id];
   const authorName = user ? formatUserDisplayName(user) : `@${rootPost.user_id || 'unknown'}`;
   const preview = (rootPost.message || '').replace(/\s+/g, ' ').slice(0, 20);
@@ -322,14 +388,27 @@ export function formatSinglePostToAttachment(params: {
   channel?: MattermostChannel;
   post: MattermostPost;
   userCache: Record<string, MattermostUser>;
+  serverUrl?: string;
+  webUrl?: string;
+  teams?: MattermostTeam[];
 }): ContextAttachment {
-  const { channel, post, userCache } = params;
+  const { channel, post, userCache, serverUrl, webUrl, teams } = params;
   const channelName = channel?.display_name || channel?.name || 'channel';
+  const teamName = channel?.team_display_name || channel?.team_name || (teams && teams[0]?.name) || '';
   const user = userCache[post.user_id];
   const authorName = user ? formatUserDisplayName(user) : `@${post.user_id || 'unknown'}`;
   const timeStr = formatFullTimestamp(post.create_at);
+  const baseUrl = (webUrl && webUrl.trim() !== '') ? webUrl.trim().replace(/\/+$/, '') : (serverUrl || '').trim().replace(/\/+$/, '');
+  const permalinkUrl = baseUrl && teamName ? `${baseUrl}/${teamName}/pl/${post.id}` : '';
 
-  let md = `# Mattermost 投稿抜粋: #${channelName}\n\n`;
+  let md = `# Mattermost 投稿抜粋: #${channelName}${teamName ? ` (${teamName})` : ''}\n\n`;
+  md += `- 投稿ID: ${post.id}\n`;
+  md += `- チャンネルID: ${channel?.id || post.channel_id || 'unknown'}\n`;
+  if (post.root_id) md += `- スレッド親ID: ${post.root_id}\n`;
+  if (permalinkUrl) md += `- 投稿URL: ${permalinkUrl}\n`;
+  md += `- APIエンドポイント: /api/v4/posts/${post.id}\n`;
+  md += `- 取得日時: ${formatFullTimestamp(Date.now())}\n\n`;
+  md += `---\n\n`;
   md += formatPostBlock(post, userCache);
 
   const preview = (post.message || '').replace(/\s+/g, ' ').slice(0, 24);

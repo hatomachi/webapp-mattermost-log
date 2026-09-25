@@ -479,6 +479,9 @@ export const App: React.FC = () => {
         rootPost: root,
         replies,
         userCache,
+        serverUrl: settings.serverUrl,
+        webUrl: settings.webUrl,
+        teams,
       });
     }
 
@@ -488,6 +491,9 @@ export const App: React.FC = () => {
         channel: ch,
         post: aiContextTarget.post,
         userCache,
+        serverUrl: settings.serverUrl,
+        webUrl: settings.webUrl,
+        teams,
       });
     }
 
@@ -498,12 +504,15 @@ export const App: React.FC = () => {
         posts,
         userCache,
         threadPosts,
-        maxPosts: 80,
+        maxPosts: 100,
+        serverUrl: settings.serverUrl,
+        webUrl: settings.webUrl,
+        teams,
       });
     }
 
     return null;
-  }, [aiContextTarget, channels, activeChannelId, posts, userCache, threadPosts]);
+  }, [aiContextTarget, channels, activeChannelId, posts, userCache, threadPosts, settings.serverUrl, settings.webUrl, teams]);
 
   // AIトピック表示名
   const aiTopicTitle = useMemo(() => {
@@ -535,14 +544,17 @@ export const App: React.FC = () => {
         posts,
         userCache,
         threadPosts,
-        maxPosts: 80,
+        maxPosts: 100,
+        serverUrl: settings.serverUrl,
+        webUrl: settings.webUrl,
+        teams,
       });
       setActiveAiAttachment(att);
     } else {
       setActiveAiAttachment(null);
     }
     setIsAiDrawerOpen(true);
-  }, [channels, activeChannelId, posts, userCache, threadPosts]);
+  }, [channels, activeChannelId, posts, userCache, threadPosts, settings.serverUrl, settings.webUrl, teams]);
 
   const handleOpenAiForThread = useCallback((rootPost: MattermostPost) => {
     if (!threadPosts[rootPost.id] && !loadingThreads[rootPost.id]) {
@@ -556,10 +568,13 @@ export const App: React.FC = () => {
       rootPost,
       replies,
       userCache,
+      serverUrl: settings.serverUrl,
+      webUrl: settings.webUrl,
+      teams,
     });
     setActiveAiAttachment(att);
     setIsAiDrawerOpen(true);
-  }, [channels, activeChannelId, threadPosts, loadingThreads, userCache, handleFetchThread]);
+  }, [channels, activeChannelId, threadPosts, loadingThreads, userCache, handleFetchThread, settings.serverUrl, settings.webUrl, teams]);
 
   const handleOpenAiForUnreads = useCallback((unreadItems: Array<{ channel: MattermostChannel; posts: MattermostPost[]; unreadCount: number }>) => {
     setAiContextTarget({ type: 'unread', unreadItems });
@@ -577,11 +592,14 @@ export const App: React.FC = () => {
       channel,
       posts: chPosts,
       userCache,
-      maxPosts: 60,
+      maxPosts: 100,
+      serverUrl: settings.serverUrl,
+      webUrl: settings.webUrl,
+      teams,
     });
     setActiveAiAttachment(att);
     setIsAiDrawerOpen(true);
-  }, [userCache]);
+  }, [userCache, settings.serverUrl, settings.webUrl, teams]);
 
   const handleApplyDraftToInput = (text: string) => {
     setAppliedAiDraft(text);
