@@ -52,6 +52,15 @@ export interface MattermostReaction {
   create_at: number;
 }
 
+export interface MattermostCustomEmoji {
+  id: string;
+  creator_id: string;
+  name: string;
+  create_at: number;
+  update_at: number;
+  delete_at: number;
+}
+
 export interface MattermostPost {
   id: string;
   create_at: number;

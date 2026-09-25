@@ -6,6 +6,7 @@ import {
   MattermostReaction,
   MattermostTeam,
   MattermostUser,
+  MattermostCustomEmoji,
 } from '../types/mattermost';
 
 export class MattermostApiError extends Error {
@@ -546,5 +547,78 @@ export const removeReaction = async (
     },
     corsProxy
   );
+};
+
+/**
+ * カスタム絵文字をキーワード検索
+ */
+export const searchCustomEmojis = async (
+  serverUrl: string,
+  token: string,
+  term: string,
+  corsProxy?: string
+): Promise<MattermostCustomEmoji[]> => {
+  return request<MattermostCustomEmoji[]>(
+    serverUrl,
+    token,
+    '/api/v4/emoji/search',
+    {
+      method: 'POST',
+      body: JSON.stringify({ term: term.trim() }),
+    },
+    corsProxy
+  );
+};
+
+/**
+ * カスタム絵文字の一覧取得（ページネーション対応）
+ */
+export const getCustomEmojis = async (
+  serverUrl: string,
+  token: string,
+  page = 0,
+  perPage = 32,
+  corsProxy?: string
+): Promise<MattermostCustomEmoji[]> => {
+  return request<MattermostCustomEmoji[]>(
+    serverUrl,
+    token,
+    `/api/v4/emoji?page=${page}&per_page=${perPage}&sort=name`,
+    {},
+    corsProxy
+  );
+};
+
+// カスタム絵文字画像のBlob URLメモリキャッシュ
+const emojiBlobUrlCache = new Map<string, string>();
+
+/**
+ * カスタム絵文字の画像Blob URLを取得（認証ヘッダー付きで取得しメモリキャッシュ）
+ */
+export const getEmojiImageUrl = async (
+  serverUrl: string,
+  token: string,
+  emojiId: string,
+  corsProxy?: string
+): Promise<string> => {
+  if (emojiBlobUrlCache.has(emojiId)) {
+    return emojiBlobUrlCache.get(emojiId)!;
+  }
+
+  const url = buildUrl(serverUrl, `/api/v4/emoji/${emojiId}/image`, corsProxy);
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token.trim()}`,
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch emoji image: ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  emojiBlobUrlCache.set(emojiId, blobUrl);
+  return blobUrl;
 };
 

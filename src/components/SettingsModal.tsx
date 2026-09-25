@@ -1,8 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { AppSettings, MattermostTeam } from '../types/mattermost';
-import { getMe, getMyTeams, formatEmojiDisplay } from '../services/mattermost';
+import { AppSettings, MattermostTeam, MattermostCustomEmoji } from '../types/mattermost';
+import {
+  getMe,
+  getMyTeams,
+  formatEmojiDisplay,
+  searchCustomEmojis,
+  getCustomEmojis,
+  getEmojiImageUrl,
+} from '../services/mattermost';
 import { DEFAULT_FAVORITE_EMOJIS } from '../services/storage';
-import { X, Check, AlertCircle, RefreshCw, Server, Key, Globe, Eye, ExternalLink, Bot, Cpu, Plus, RotateCcw } from 'lucide-react';
+import {
+  X,
+  Check,
+  AlertCircle,
+  RefreshCw,
+  Server,
+  Key,
+  Globe,
+  Eye,
+  ExternalLink,
+  Bot,
+  Cpu,
+  Plus,
+  RotateCcw,
+  Search,
+  Image as ImageIcon,
+  Loader2,
+} from 'lucide-react';
 import { deriveHttpUrls, deriveWsUrl } from '../features/ai/useAiRemoteClient';
 
 interface Props {
@@ -11,6 +35,47 @@ interface Props {
   settings: AppSettings;
   onSave: (settings: AppSettings) => void;
 }
+
+const CustomEmojiThumbnail: React.FC<{
+  serverUrl: string;
+  token: string;
+  emoji: MattermostCustomEmoji;
+  corsProxy?: string;
+}> = ({ serverUrl, token, emoji, corsProxy }) => {
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    getEmojiImageUrl(serverUrl, token, emoji.id, corsProxy)
+      .then((url) => {
+        if (isMounted) setImgUrl(url);
+      })
+      .catch(() => {
+        if (isMounted) setHasError(true);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [serverUrl, token, emoji.id, corsProxy]);
+
+  if (hasError) {
+    return <span className="text-[10px] text-zinc-500 font-mono">:{emoji.name}:</span>;
+  }
+
+  if (!imgUrl) {
+    return <span className="w-6 h-6 rounded bg-zinc-800 animate-pulse inline-block shrink-0" />;
+  }
+
+  return (
+    <img
+      src={imgUrl}
+      alt={emoji.name}
+      className="w-6 h-6 object-contain inline-block shrink-0"
+      loading="lazy"
+    />
+  );
+};
 
 export const SettingsModal: React.FC<Props> = ({
   isOpen,
@@ -34,6 +99,13 @@ export const SettingsModal: React.FC<Props> = ({
 
   const [newEmojiInput, setNewEmojiInput] = useState('');
 
+  // カスタム絵文字画像検索用ステート
+  const [customEmojiSearchTerm, setCustomEmojiSearchTerm] = useState('');
+  const [searchedCustomEmojis, setSearchedCustomEmojis] = useState<MattermostCustomEmoji[]>([]);
+  const [isSearchingEmojis, setIsSearchingEmojis] = useState(false);
+  const [searchEmojiError, setSearchEmojiError] = useState<string | null>(null);
+  const [hasSearchedEmojis, setHasSearchedEmojis] = useState(false);
+
   const currentFavoriteEmojis = formData.favoriteEmojis || DEFAULT_FAVORITE_EMOJIS;
 
   const handleAddFavoriteEmoji = (e: React.FormEvent) => {
@@ -56,11 +128,60 @@ export const SettingsModal: React.FC<Props> = ({
     });
   };
 
+  const handleToggleFavoriteCustomEmoji = (emojiName: string) => {
+    if (currentFavoriteEmojis.includes(emojiName)) {
+      handleRemoveFavoriteEmoji(emojiName);
+    } else {
+      setFormData({
+        ...formData,
+        favoriteEmojis: [...currentFavoriteEmojis, emojiName],
+      });
+    }
+  };
+
   const handleResetFavoriteEmojis = () => {
     setFormData({
       ...formData,
       favoriteEmojis: DEFAULT_FAVORITE_EMOJIS,
     });
+  };
+
+  const handleSearchCustomEmojis = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!formData.serverUrl || !formData.token) {
+      setSearchEmojiError('サーバーURLとトークンが入力されていません');
+      return;
+    }
+
+    setIsSearchingEmojis(true);
+    setSearchEmojiError(null);
+    setHasSearchedEmojis(true);
+
+    try {
+      let results: MattermostCustomEmoji[];
+      const term = customEmojiSearchTerm.trim().replace(/^:+|:+$/g, '');
+      if (term) {
+        results = await searchCustomEmojis(
+          formData.serverUrl,
+          formData.token,
+          term,
+          formData.corsProxy
+        );
+      } else {
+        results = await getCustomEmojis(
+          formData.serverUrl,
+          formData.token,
+          0,
+          32,
+          formData.corsProxy
+        );
+      }
+      setSearchedCustomEmojis(results);
+    } catch (err: any) {
+      setSearchEmojiError(err.message || 'カスタム絵文字の取得に失敗しました');
+    } finally {
+      setIsSearchingEmojis(false);
+    }
   };
 
   const handleTestAiConnection = async () => {
@@ -588,6 +709,109 @@ export const SettingsModal: React.FC<Props> = ({
                     <Plus className="w-3 h-3" />
                     <span>追加</span>
                   </button>
+                </div>
+
+                {/* 社内カスタムスタンプ検索（実画像プレビュー＆ワンタップお気に入り追加） */}
+                <div className="pt-2 border-t border-zinc-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-1.5 text-zinc-300">
+                      <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
+                      <span className="text-xs font-semibold">カスタムスタンプ検索（実画像プレビュー）</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-500">クリックでお気に入りに追加/解除</span>
+                  </div>
+
+                  <form onSubmit={handleSearchCustomEmojis} className="flex items-center space-x-1.5">
+                    <input
+                      type="text"
+                      value={customEmojiSearchTerm}
+                      onChange={(e) => setCustomEmojiSearchTerm(e.target.value)}
+                      placeholder="スタンプ名を検索 (空欄で一覧取得, 例: otsukare)"
+                      className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2.5 py-1 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-sky-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSearchCustomEmojis}
+                      disabled={isSearchingEmojis}
+                      className="bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white px-3 py-1 rounded text-xs flex items-center space-x-1 font-semibold transition-colors shrink-0"
+                    >
+                      {isSearchingEmojis ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Search className="w-3 h-3" />
+                      )}
+                      <span>{isSearchingEmojis ? '検索中' : '探す'}</span>
+                    </button>
+                  </form>
+
+                  {/* エラー表示 */}
+                  {searchEmojiError && (
+                    <div className="p-1.5 text-[10px] text-rose-400 bg-rose-950/40 border border-rose-800 rounded">
+                      {searchEmojiError}
+                    </div>
+                  )}
+
+                  {/* 検索結果グリッド */}
+                  {hasSearchedEmojis && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                        <span>検出: {searchedCustomEmojis.length} 件</span>
+                        {searchedCustomEmojis.length > 0 && (
+                          <span className="text-zinc-500">※画像をクリックしてお気に入り登録</span>
+                        )}
+                      </div>
+
+                      {searchedCustomEmojis.length === 0 ? (
+                        <div className="p-3 text-center text-zinc-500 text-xs bg-zinc-900/50 rounded border border-zinc-800">
+                          該当するカスタムスタンプが見つかりませんでした
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-h-52 overflow-y-auto p-1 bg-zinc-900/40 rounded border border-zinc-800/80">
+                          {searchedCustomEmojis.map((emoji) => {
+                            const isFav = currentFavoriteEmojis.includes(emoji.name);
+                            return (
+                              <button
+                                key={emoji.id}
+                                type="button"
+                                onClick={() => handleToggleFavoriteCustomEmoji(emoji.name)}
+                                className={`flex items-center space-x-1.5 p-1 rounded border text-left transition-all cursor-pointer ${
+                                  isFav
+                                    ? 'bg-sky-950/80 border-sky-600 text-sky-200'
+                                    : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800'
+                                }`}
+                                title={isFav ? `:${emoji.name}: (お気に入り解除)` : `:${emoji.name}: (お気に入りに追加)`}
+                              >
+                                <CustomEmojiThumbnail
+                                  serverUrl={formData.serverUrl}
+                                  token={formData.token}
+                                  emoji={emoji}
+                                  corsProxy={formData.corsProxy}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[10px] font-mono truncate leading-tight">
+                                    :{emoji.name}:
+                                  </div>
+                                  <div className="text-[9px] leading-none mt-0.5">
+                                    {isFav ? (
+                                      <span className="text-sky-400 font-semibold">✓ 登録済</span>
+                                    ) : (
+                                      <span className="text-zinc-500 hover:text-zinc-400">＋ 追加</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!hasSearchedEmojis && (
+                    <div className="text-[10px] text-zinc-500 bg-zinc-900/30 p-2 rounded border border-zinc-850">
+                      💡 「探す」を押すと社内のカスタムスタンプ（実画像アイコン付き）を検索し、ワンタップでお気に入りに追加できます。
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
