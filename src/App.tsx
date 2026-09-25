@@ -32,6 +32,7 @@ import {
   getChannelPosts,
   getPostThread,
   getUsersByIds,
+  getChannelUsers,
   createPost,
   buildMattermostChannelUrl,
   viewChannel,
@@ -132,6 +133,52 @@ export const App: React.FC = () => {
       } catch (e) {
         console.warn('Failed to fetch user profiles:', e);
       }
+    },
+    [settings.serverUrl, settings.token, settings.corsProxy]
+  );
+
+  // チャンネル所属メンバーのキャッシュ
+  const channelUsersCacheRef = useRef<Record<string, MattermostUser[]>>({});
+
+  // チャンネルメンバー一覧の取得（キャッシュ活用 & userCacheへのマージ）
+  const handleFetchChannelUsers = useCallback(
+    async (channelId: string): Promise<MattermostUser[]> => {
+      if (!settings.serverUrl || !settings.token || !channelId) return [];
+
+      // すでにキャッシュにあれば即座に返却
+      if (channelUsersCacheRef.current[channelId]) {
+        return channelUsersCacheRef.current[channelId];
+      }
+
+      const users = await getChannelUsers(
+        settings.serverUrl,
+        settings.token,
+        channelId,
+        settings.corsProxy
+      );
+
+      channelUsersCacheRef.current[channelId] = users;
+
+      // 取得したメンバーを全体ユーザーキャッシュにも反映
+      if (users.length > 0) {
+        setUserCache((prev) => {
+          let hasNew = false;
+          const updated = { ...prev };
+          users.forEach((u) => {
+            if (!updated[u.id]) {
+              updated[u.id] = u;
+              hasNew = true;
+            }
+          });
+          if (hasNew) {
+            saveUserCache(updated);
+            return updated;
+          }
+          return prev;
+        });
+      }
+
+      return users;
     },
     [settings.serverUrl, settings.token, settings.corsProxy]
   );
@@ -975,7 +1022,9 @@ export const App: React.FC = () => {
             onToggleCollapseNewlines={handleToggleCollapseNewlines}
             showReactions={settings.showReactions}
             onToggleShowReactions={handleToggleShowReactions}
+            channelId={activeChannelId || undefined}
             channelName={activeChannel?.display_name || activeChannel?.name}
+            onFetchChannelUsers={handleFetchChannelUsers}
             hasMorePosts={hasMorePosts}
             isLoadingOlder={isLoadingOlder}
             onLoadOlderPosts={handleLoadOlderPosts}

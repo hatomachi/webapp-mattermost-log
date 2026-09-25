@@ -622,3 +622,62 @@ export const getEmojiImageUrl = async (
   return blobUrl;
 };
 
+/**
+ * チャンネル所属ユーザー一覧を取得
+ * 1. /api/v4/users?in_channel={channelId} を試行
+ * 2. 失敗時は /api/v4/channels/{channelId}/members から user_ids を取得して getUsersByIds で解決
+ */
+export const getChannelUsers = async (
+  serverUrl: string,
+  token: string,
+  channelId: string,
+  corsProxy?: string
+): Promise<MattermostUser[]> => {
+  if (!channelId) return [];
+
+  // 1. users?in_channel
+  try {
+    const users = await request<MattermostUser[]>(
+      serverUrl,
+      token,
+      `/api/v4/users?in_channel=${encodeURIComponent(channelId)}&per_page=200`,
+      {},
+      corsProxy
+    );
+    if (Array.isArray(users) && users.length > 0) {
+      return users.sort((a, b) => {
+        const nameA = formatUserDisplayName(a);
+        const nameB = formatUserDisplayName(b);
+        return nameA.localeCompare(nameB, 'ja');
+      });
+    }
+  } catch (err) {
+    console.warn('Failed to fetch users directly via /api/v4/users?in_channel, falling back to channel members:', err);
+  }
+
+  // 2. フォールバック
+  try {
+    const members = await request<MattermostChannelMember[]>(
+      serverUrl,
+      token,
+      `/api/v4/channels/${encodeURIComponent(channelId)}/members?per_page=200`,
+      {},
+      corsProxy
+    );
+    if (Array.isArray(members) && members.length > 0) {
+      const userIds = members.map((m) => m.user_id).filter(Boolean);
+      const users = await getUsersByIds(serverUrl, token, userIds, corsProxy);
+      return users.sort((a, b) => {
+        const nameA = formatUserDisplayName(a);
+        const nameB = formatUserDisplayName(b);
+        return nameA.localeCompare(nameB, 'ja');
+      });
+    }
+  } catch (err) {
+    console.error('Failed to fetch channel members fallback:', err);
+    throw err;
+  }
+
+  return [];
+};
+

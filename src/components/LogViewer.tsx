@@ -8,6 +8,7 @@ import {
   formatEmojiDisplay,
 } from '../services/mattermost';
 import { EmojiPicker } from './EmojiPicker';
+import { MentionPicker } from './MentionPicker';
 import {
   ArrowDown,
   CornerDownRight,
@@ -26,6 +27,7 @@ import {
   Check,
   Bell,
   BellOff,
+  AtSign,
 } from 'lucide-react';
 
 interface Props {
@@ -38,7 +40,10 @@ interface Props {
   onToggleCollapseNewlines?: () => void;
   showReactions?: boolean;
   onToggleShowReactions?: () => void;
+  channelId?: string;
   channelName?: string;
+  channelUsers?: MattermostUser[];
+  onFetchChannelUsers?: (channelId: string) => Promise<MattermostUser[]>;
   hasMorePosts?: boolean;
   isLoadingOlder?: boolean;
   onLoadOlderPosts?: () => Promise<void>;
@@ -73,7 +78,10 @@ export const LogViewer: React.FC<Props> = ({
   onToggleCollapseNewlines,
   showReactions = false,
   onToggleShowReactions,
+  channelId,
   channelName,
+  channelUsers: channelUsersProp,
+  onFetchChannelUsers,
   hasMorePosts = false,
   isLoadingOlder = false,
   onLoadOlderPosts,
@@ -105,6 +113,12 @@ export const LogViewer: React.FC<Props> = ({
   const [isFilterMode, setIsFilterMode] = useState(false); // true: マッチ行のみ表示, false: ハイライトのみ
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [pickerPostId, setPickerPostId] = useState<string | null>(null);
+
+  // メンションピッカーステート
+  const [isMentionPickerOpen, setIsMentionPickerOpen] = useState(false);
+  const [loadedChannelUsers, setLoadedChannelUsers] = useState<MattermostUser[]>([]);
+  const [isLoadingChannelUsers, setIsLoadingChannelUsers] = useState(false);
+  const [channelUsersError, setChannelUsersError] = useState<string | null>(null);
 
   // 投稿・返信ステート
   const [inputText, setInputText] = useState('');
@@ -240,6 +254,13 @@ export const LogViewer: React.FC<Props> = ({
     }
   };
 
+  // チャンネル変更時にメンションピッカーをリセット
+  useEffect(() => {
+    setIsMentionPickerOpen(false);
+    setLoadedChannelUsers([]);
+    setChannelUsersError(null);
+  }, [channelId]);
+
   // 返信ターゲットを設定
   const handleSetReply = (target: MattermostPost) => {
     const rootId = target.root_id || target.id;
@@ -261,10 +282,119 @@ export const LogViewer: React.FC<Props> = ({
       toggleThread(rootId);
     }
 
+    // 返信相手へのメンションを自動挿入（相手が自分自身でない場合）
+    const targetUsername = user?.username || target.props?.override_username;
+    if (targetUsername && target.user_id !== currentUserId) {
+      const mentionText = `@${targetUsername} `;
+      setInputText((prev) => {
+        // すでに先頭にメンションが入っているか、または同一メンションが含まれていればそのまま
+        if (prev.startsWith(mentionText) || prev.includes(`@${targetUsername}`)) {
+          return prev;
+        }
+        return `${mentionText}${prev}`;
+      });
+    }
+
     setTimeout(() => {
       textareaRef.current?.focus();
+      if (textareaRef.current) {
+        const len = textareaRef.current.value.length;
+        textareaRef.current.setSelectionRange(len, len);
+      }
+      adjustTextareaHeight();
     }, 50);
   };
+
+  // 返信をキャンセル
+  const handleCancelReply = () => {
+    if (replyTarget) {
+      // もし入力欄が返信相手へのメンションのみ（例: "@tanaka "）なら入力欄もクリア
+      const user = Object.values(userCache).find(
+        (u) => formatUserDisplayName(u) === replyTarget.authorName || u.username === replyTarget.authorName
+      );
+      const targetUsername = user?.username;
+      if (targetUsername && (inputText.trim() === `@${targetUsername}` || inputText === `@${targetUsername} `)) {
+        setInputText('');
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+        }
+      }
+    }
+    setReplyTarget(null);
+  };
+
+  // メンションピッカーのトグル & チャンネルメンバー読み込み
+  const handleToggleMentionPicker = async () => {
+    if (isMentionPickerOpen) {
+      setIsMentionPickerOpen(false);
+      return;
+    }
+
+    setIsMentionPickerOpen(true);
+
+    const hasMembers = (channelUsersProp && channelUsersProp.length > 0) || loadedChannelUsers.length > 0;
+    if (channelId && onFetchChannelUsers && !hasMembers) {
+      try {
+        setIsLoadingChannelUsers(true);
+        setChannelUsersError(null);
+        const users = await onFetchChannelUsers(channelId);
+        setLoadedChannelUsers(users);
+      } catch (err: any) {
+        setChannelUsersError(err.message || 'メンバーの取得に失敗しました');
+      } finally {
+        setIsLoadingChannelUsers(false);
+      }
+    }
+  };
+
+  // チャンネルメンバーの再取得
+  const handleRefreshChannelUsers = async () => {
+    if (!channelId || !onFetchChannelUsers) return;
+    try {
+      setIsLoadingChannelUsers(true);
+      setChannelUsersError(null);
+      const users = await onFetchChannelUsers(channelId);
+      setLoadedChannelUsers(users);
+    } catch (err: any) {
+      setChannelUsersError(err.message || 'メンバーの取得に失敗しました');
+    } finally {
+      setIsLoadingChannelUsers(false);
+    }
+  };
+
+  // メンション選択
+  const handleSelectMention = (mentionName: string) => {
+    const mentionText = `@${mentionName} `;
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setInputText((prev) => (prev ? `${prev} ${mentionText}` : mentionText));
+      setIsMentionPickerOpen(false);
+      return;
+    }
+
+    const start = textarea.selectionStart ?? inputText.length;
+    const end = textarea.selectionEnd ?? inputText.length;
+    const before = inputText.substring(0, start);
+    const after = inputText.substring(end);
+    const nextText = `${before}${mentionText}${after}`;
+    setInputText(nextText);
+    setIsMentionPickerOpen(false);
+
+    setTimeout(() => {
+      textarea.focus();
+      const newCursor = start + mentionText.length;
+      textarea.setSelectionRange(newCursor, newCursor);
+      adjustTextareaHeight();
+    }, 10);
+  };
+
+  // 表示用メンバーリスト
+  const currentChannelUsers = useMemo(() => {
+    if (channelUsersProp && channelUsersProp.length > 0) {
+      return channelUsersProp;
+    }
+    return loadedChannelUsers;
+  }, [channelUsersProp, loadedChannelUsers]);
 
   // 投稿・返信送信
   const handleSubmit = async () => {
@@ -297,7 +427,7 @@ export const LogViewer: React.FC<Props> = ({
     }
   };
 
-  // キー入力ハンドラ (Enterで送信, Shift+Enterで改行, Escで返信キャンセル)
+  // キー入力ハンドラ (Enterで送信, Shift+Enterで改行, Escで返信キャンセル/ピッカー閉じる)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // IME入力中は無視
     if (e.nativeEvent.isComposing || e.key === 'Process' || e.keyCode === 229) {
@@ -307,9 +437,14 @@ export const LogViewer: React.FC<Props> = ({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
-    } else if (e.key === 'Escape' && replyTarget) {
-      e.preventDefault();
-      setReplyTarget(null);
+    } else if (e.key === 'Escape') {
+      if (isMentionPickerOpen) {
+        e.preventDefault();
+        setIsMentionPickerOpen(false);
+      } else if (replyTarget) {
+        e.preventDefault();
+        handleCancelReply();
+      }
     }
   };
 
@@ -1023,7 +1158,7 @@ export const LogViewer: React.FC<Props> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setReplyTarget(null)}
+                onClick={handleCancelReply}
                 className="text-sky-400 hover:text-sky-100 ml-2 px-1.5 py-0.5 rounded hover:bg-sky-900/60 flex items-center text-[10px] shrink-0 transition-colors"
                 title="返信をキャンセル (Esc)"
               >
@@ -1034,7 +1169,7 @@ export const LogViewer: React.FC<Props> = ({
           )}
 
           {/* 入力行 */}
-          <div className="p-1.5 sm:px-2.5 flex items-end space-x-1.5">
+          <div className="p-1.5 sm:px-2.5 flex items-end space-x-1.5 relative">
             {/* プロンプトラベル */}
             <div className="shrink-0 pb-1 text-zinc-500 font-mono text-[11px] hidden sm:flex items-center select-none">
               <span className="text-emerald-500/80 font-bold mr-1">
@@ -1044,6 +1179,32 @@ export const LogViewer: React.FC<Props> = ({
                 {replyTarget ? `スレッド返信` : `#${channelName}`}
               </span>
             </div>
+
+            {/* メンション挿入ボタン */}
+            <button
+              type="button"
+              onClick={handleToggleMentionPicker}
+              className={`shrink-0 p-1.5 mb-0.5 rounded font-mono text-xs transition-colors flex items-center justify-center min-w-[28px] h-[28px] border cursor-pointer ${
+                isMentionPickerOpen
+                  ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60 shadow-xs'
+                  : 'bg-zinc-900/90 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border-zinc-700/80'
+              }`}
+              title="メンションを挿入 (@)"
+            >
+              <AtSign className="w-3.5 h-3.5" />
+            </button>
+
+            {/* メンションピッカー */}
+            <MentionPicker
+              isOpen={isMentionPickerOpen}
+              onClose={() => setIsMentionPickerOpen(false)}
+              onSelectMention={handleSelectMention}
+              channelUsers={currentChannelUsers}
+              isLoading={isLoadingChannelUsers}
+              error={channelUsersError}
+              onRefresh={handleRefreshChannelUsers}
+              channelName={channelName}
+            />
 
             {/* 自動伸縮テキストエリア */}
             <div className="relative flex-1">
