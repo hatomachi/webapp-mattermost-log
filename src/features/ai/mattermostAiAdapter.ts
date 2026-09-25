@@ -81,23 +81,39 @@ function formatFullTimestamp(timestamp: number): string {
 
 /**
  * Format a single Mattermost post into a Markdown line/block.
- * Appends compact ID metadata so LLM / agent can trace via API without cluttering visual layout.
+ * Appends compact ID metadata and thread context so LLM / agent can trace via API without cluttering visual layout.
  */
 function formatPostBlock(
   post: MattermostPost,
   userCache: Record<string, MattermostUser>,
-  indent = ''
+  options?: {
+    indent?: string;
+    rootPost?: MattermostPost;
+  }
 ): string {
   const user = userCache[post.user_id];
   const authorName = user ? formatUserDisplayName(user) : `@${post.props?.override_username || post.user_id || 'unknown'}`;
   const timeStr = formatFullTimestamp(post.create_at);
+  const indent = options?.indent || '';
 
-  // Compact ID annotation for API tracking (avoids verbose URLs on every line)
-  const idMeta = post.root_id
-    ? `[id: ${post.id}, root: ${post.root_id}]`
-    : `[id: ${post.id}]`;
+  // Thread context annotation
+  let threadAnnotation = '';
+  if (post.root_id) {
+    if (options?.rootPost) {
+      const rootUser = userCache[options.rootPost.user_id];
+      const rootAuthor = rootUser ? formatUserDisplayName(rootUser) : `@${options.rootPost.props?.override_username || options.rootPost.user_id || 'unknown'}`;
+      const rootSnippet = (options.rootPost.message || '').replace(/\s+/g, ' ').trim().slice(0, 24);
+      const ellipsis = (options.rootPost.message || '').length > 24 ? '...' : '';
+      threadAnnotation = ` (↳ @${rootAuthor}「${rootSnippet}${ellipsis}」への返信 [root: ${post.root_id}])`;
+    } else {
+      threadAnnotation = ` (↳ スレッド返信 [root: ${post.root_id}])`;
+    }
+  } else if (post.reply_count && post.reply_count > 0) {
+    threadAnnotation = ` (💬 返信${post.reply_count}件あり)`;
+  }
 
-  let output = `${indent}[${timeStr}] **${authorName}** ${idMeta}:\n`;
+  const idMeta = `[id: ${post.id}]`;
+  let output = `${indent}[${timeStr}] **${authorName}** ${idMeta}${threadAnnotation}:\n`;
 
   // Indent message lines
   const messageLines = (post.message || '(空のメッセージ)').split('\n');
@@ -127,7 +143,8 @@ function formatPostBlock(
 
 /**
  * Format channel posts into clean Markdown.
- * Correctly gathers thread replies without dropping them even if unexpanded in the UI.
+ * Preserves the exact chronological flat order as seen by the user on screen,
+ * while seamlessly embedding thread parent context for thread replies.
  */
 export function formatChannelLogsToMarkdown(params: {
   channel?: MattermostChannel;
@@ -156,19 +173,25 @@ export function formatChannelLogsToMarkdown(params: {
   const baseUrl = (webUrl && webUrl.trim() !== '') ? webUrl.trim().replace(/\/+$/, '') : (serverUrl || '').trim().replace(/\/+$/, '');
   const permalinkFormat = baseUrl ? `${baseUrl}/${teamName}/pl/{post_id}` : '/pl/{post_id}';
 
-  // Sort chronological (oldest to newest) and slice up to maxPosts
-  const sorted = [...posts].sort((a, b) => a.create_at - b.create_at).slice(-maxPosts);
-
-  // Group all thread replies present within the current batch by their root_id
-  const repliesByRootId: Record<string, MattermostPost[]> = {};
-  for (const p of sorted) {
-    if (p.root_id) {
-      if (!repliesByRootId[p.root_id]) {
-        repliesByRootId[p.root_id] = [];
+  // Merge posts and threadPosts cache to avoid any missing replies, keyed by ID
+  const allPostMap = new Map<string, MattermostPost>();
+  for (const p of posts) {
+    allPostMap.set(p.id, p);
+  }
+  for (const rootId in threadPosts) {
+    const replies = threadPosts[rootId];
+    if (Array.isArray(replies)) {
+      for (const r of replies) {
+        if (!allPostMap.has(r.id)) {
+          allPostMap.set(r.id, r);
+        }
       }
-      repliesByRootId[p.root_id].push(p);
     }
   }
+
+  // Sort completely chronological (oldest to newest) to match user's visual timeline
+  const chronological = Array.from(allPostMap.values()).sort((a, b) => a.create_at - b.create_at);
+  const sorted = chronological.slice(-maxPosts);
 
   const startDateStr = sorted.length > 0 ? formatFullTimestamp(sorted[0].create_at) : 'なし';
   const endDateStr = sorted.length > 0 ? formatFullTimestamp(sorted[sorted.length - 1].create_at) : 'なし';
@@ -180,44 +203,15 @@ export function formatChannelLogsToMarkdown(params: {
   if (channelUrl) md += `- チャンネルURL: ${channelUrl}\n`;
   if (channel?.id) md += `- APIエンドポイント: /api/v4/channels/${channel.id}/posts\n`;
   md += `- パーマリンク形式: ${permalinkFormat}\n`;
-  md += `- ログ表示範囲: ${startDateStr} 〜 ${endDateStr} (取得${sorted.length}件 / 全${posts.length}件)\n`;
+  md += `- ログ表示順: 画面と同じ時系列順（上から順）\n`;
+  md += `- ログ表示範囲: ${startDateStr} 〜 ${endDateStr} (取得${sorted.length}件 / 全${chronological.length}件)\n`;
   if (channel?.header) md += `- ヘッダー: ${channel.header}\n`;
   if (channel?.purpose) md += `- 目的: ${channel.purpose}\n`;
   md += `\n---\n\n`;
 
   for (const post of sorted) {
-    // If it's a reply in a thread and its root post is in the list, we will render it grouped under the root post.
-    if (post.root_id && sorted.some((p) => p.id === post.root_id)) {
-      continue;
-    }
-
-    // Output root post (or orphaned reply whose root is older than maxPosts)
-    md += formatPostBlock(post, userCache);
-
-    // Merge replies from cache (threadPosts) and current sorted batch without duplicates
-    const cachedReplies = threadPosts[post.id] || [];
-    const batchReplies = repliesByRootId[post.id] || [];
-
-    const replyMap = new Map<string, MattermostPost>();
-    for (const r of cachedReplies) {
-      if (r.id !== post.id) replyMap.set(r.id, r);
-    }
-    for (const r of batchReplies) {
-      if (r.id !== post.id) replyMap.set(r.id, r);
-    }
-
-    const mergedReplies = Array.from(replyMap.values()).sort((a, b) => a.create_at - b.create_at);
-
-    if (mergedReplies.length > 0) {
-      md += `  > 💬 **--- スレッド返信 (${mergedReplies.length}件) ---**\n`;
-      for (const reply of mergedReplies) {
-        md += formatPostBlock(reply, userCache, '  ');
-      }
-      md += `  > 💬 **--- スレッド終了 ---**\n`;
-    } else if (post.reply_count && post.reply_count > 0) {
-      md += `  > 💬 *(${post.reply_count}件のスレッド返信あり / 本文未取得)*\n`;
-    }
-
+    const rootPost = post.root_id ? allPostMap.get(post.root_id) : undefined;
+    md += formatPostBlock(post, userCache, { rootPost });
     md += '\n';
   }
 
@@ -271,7 +265,7 @@ export function formatThreadLogsToMarkdown(params: {
     md += `*(まだ返信はありません)*\n`;
   } else {
     for (const reply of sortedReplies) {
-      md += formatPostBlock(reply, userCache);
+      md += formatPostBlock(reply, userCache, { rootPost });
       md += '\n';
     }
   }
