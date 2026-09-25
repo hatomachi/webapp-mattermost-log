@@ -230,8 +230,12 @@ export const getUsersByIds = async (
   );
 };
 
+// 添付ファイルのBlob URLメモリキャッシュ
+const fileBlobUrlCache = new Map<string, string>();
+const fileInfoCache = new Map<string, MattermostFileInfo>();
+
 /**
- * 添付ファイルのBlobURLを取得（認証ヘッダー付きでフェッチ）
+ * 添付ファイルのBlobURLを取得（認証ヘッダー付きでフェッチ、メモリキャッシュ）
  */
 export const fetchFileBlobUrl = async (
   serverUrl: string,
@@ -240,6 +244,11 @@ export const fetchFileBlobUrl = async (
   thumbnail: boolean = false,
   corsProxy?: string
 ): Promise<string> => {
+  const cacheKey = `${fileId}_${thumbnail ? 'thumb' : 'full'}`;
+  if (fileBlobUrlCache.has(cacheKey)) {
+    return fileBlobUrlCache.get(cacheKey)!;
+  }
+
   const path = thumbnail ? `/api/v4/files/${fileId}/thumbnail` : `/api/v4/files/${fileId}`;
   const url = buildUrl(serverUrl, path, corsProxy);
   const res = await fetch(url, {
@@ -248,10 +257,77 @@ export const fetchFileBlobUrl = async (
     },
   });
   if (!res.ok) {
-    throw new Error(`Failed to load file: ${res.statusText}`);
+    throw new Error(`Failed to load file: ${res.status} ${res.statusText}`);
   }
   const blob = await res.blob();
-  return URL.createObjectURL(blob);
+  const blobUrl = URL.createObjectURL(blob);
+  fileBlobUrlCache.set(cacheKey, blobUrl);
+  return blobUrl;
+};
+
+/**
+ * 添付ファイルをダウンロード（ブラウザの自動ダウンロードを発火）
+ */
+export const downloadFile = async (
+  serverUrl: string,
+  token: string,
+  fileId: string,
+  filename: string,
+  corsProxy?: string
+): Promise<void> => {
+  const blobUrl = await fetchFileBlobUrl(serverUrl, token, fileId, false, corsProxy);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename || `file_${fileId}`;
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
+
+/**
+ * ファイルメタデータを取得 (GET /api/v4/files/{file_id}/info)
+ */
+export const getFileInfo = async (
+  serverUrl: string,
+  token: string,
+  fileId: string,
+  corsProxy?: string
+): Promise<MattermostFileInfo> => {
+  if (fileInfoCache.has(fileId)) {
+    return fileInfoCache.get(fileId)!;
+  }
+  const info = await request<MattermostFileInfo>(
+    serverUrl,
+    token,
+    `/api/v4/files/${fileId}/info`,
+    {},
+    corsProxy
+  );
+  fileInfoCache.set(fileId, info);
+  return info;
+};
+
+/**
+ * 複数のfileIdのメタデータを取得
+ */
+export const getFilesInfo = async (
+  serverUrl: string,
+  token: string,
+  fileIds: string[],
+  corsProxy?: string
+): Promise<MattermostFileInfo[]> => {
+  const results = await Promise.all(
+    fileIds.map(async (id) => {
+      try {
+        return await getFileInfo(serverUrl, token, id, corsProxy);
+      } catch (err) {
+        console.warn(`Failed to fetch file info for ${id}:`, err);
+        return null;
+      }
+    })
+  );
+  return results.filter((f): f is MattermostFileInfo => f !== null);
 };
 
 /**

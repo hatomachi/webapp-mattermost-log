@@ -22,6 +22,7 @@ import {
 } from '../services/mattermost';
 import { getEffectiveChannelSubscription } from '../services/storage';
 import { EmojiPicker } from './EmojiPicker';
+import { AttachmentList } from './AttachmentList';
 import {
   Check,
   CheckCheck,
@@ -73,6 +74,7 @@ interface Props {
   recentEmojis?: string[];
   onToggleReaction?: (postId: string, emojiName: string) => Promise<void>;
   onAddReaction?: (postId: string, emojiName: string) => Promise<void>;
+  onPreviewImage?: (files: MattermostFileInfo[], index: number) => void;
 }
 
 interface UnreadChannelItem {
@@ -124,6 +126,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   recentEmojis,
   onToggleReaction,
   onAddReaction,
+  onPreviewImage,
 }) => {
   const [channelStates, setChannelStates] = useState<Record<string, ChannelCatchupState>>({});
   const [activeTab, setActiveTab] = useState<CatchupTabMode>('main');
@@ -534,44 +537,15 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   };
 
   const renderAttachments = (post: MattermostPost) => {
-    const files = post.metadata?.files || [];
-    if (files.length === 0 && (!post.file_ids || post.file_ids.length === 0)) {
-      return null;
-    }
-
     return (
-      <div className="flex flex-wrap gap-1.5 mt-0.5 select-none">
-        {files.length > 0 ? (
-          files.map((file: MattermostFileInfo) => {
-            const isImg =
-              file.mime_type?.startsWith('image/') ||
-              ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes((file.extension || '').toLowerCase());
-            return (
-              <span
-                key={file.id}
-                className="inline-flex items-center space-x-1 px-1.5 py-0.2 rounded bg-zinc-900 border border-zinc-700/80 text-[10px] text-zinc-300 font-mono"
-              >
-                {isImg ? (
-                  <ImageIcon className="w-3 h-3 text-sky-400 shrink-0" />
-                ) : (
-                  <FileText className="w-3 h-3 text-amber-400 shrink-0" />
-                )}
-                <span className="truncate max-w-[140px]" title={file.name}>
-                  {file.name}
-                </span>
-                {file.size > 0 && (
-                  <span className="text-zinc-500 text-[9px]">({formatFileSize(file.size)})</span>
-                )}
-              </span>
-            );
-          })
-        ) : (
-          <span className="inline-flex items-center space-x-1 px-1.5 py-0.2 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400">
-            <Paperclip className="w-2.5 h-2.5 text-zinc-400" />
-            <span>添付ファイル {post.file_ids?.length} 件</span>
-          </span>
-        )}
-      </div>
+      <AttachmentList
+        post={post}
+        serverUrl={serverUrl}
+        token={token}
+        corsProxy={corsProxy}
+        onPreviewImage={onPreviewImage || (() => {})}
+        className="mt-0.5"
+      />
     );
   };
 

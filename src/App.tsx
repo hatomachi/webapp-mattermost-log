@@ -47,6 +47,7 @@ import { ChannelSidebar } from './components/ChannelSidebar';
 import { LogViewer } from './components/LogViewer';
 import { UnreadCatchupViewer } from './components/UnreadCatchupViewer';
 import { SettingsModal } from './components/SettingsModal';
+import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { AiRemoteChatDrawer } from './components/ai/AiRemoteChatDrawer';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import {
@@ -92,6 +93,33 @@ export const App: React.FC = () => {
   }>({ type: 'channel' });
   const [activeAiAttachment, setActiveAiAttachment] = useState<ContextAttachment | null>(null);
   const [appliedAiDraft, setAppliedAiDraft] = useState<string | null>(null);
+
+  // 画像プレビューモーダル用ステート
+  const [previewState, setPreviewState] = useState<{
+    isOpen: boolean;
+    files: MattermostFileInfo[];
+    currentIndex: number;
+  }>({
+    isOpen: false,
+    files: [],
+    currentIndex: 0,
+  });
+
+  const handlePreviewImage = useCallback((files: MattermostFileInfo[], index: number) => {
+    setPreviewState({
+      isOpen: true,
+      files,
+      currentIndex: index,
+    });
+  }, []);
+
+  const handleClosePreview = useCallback(() => {
+    setPreviewState((prev) => ({ ...prev, isOpen: false }));
+  }, []);
+
+  const handleNavigatePreview = useCallback((index: number) => {
+    setPreviewState((prev) => ({ ...prev, currentIndex: index }));
+  }, []);
 
   const isConnected = Boolean(settings.serverUrl && settings.token);
 
@@ -1037,6 +1065,7 @@ export const App: React.FC = () => {
             recentEmojis={recentEmojis}
             onToggleReaction={handleToggleReaction}
             onAddReaction={handleAddReaction}
+            onPreviewImage={handlePreviewImage}
           />
         ) : (
           <LogViewer
@@ -1075,6 +1104,10 @@ export const App: React.FC = () => {
             recentEmojis={recentEmojis}
             onToggleReaction={handleToggleReaction}
             onAddReaction={handleAddReaction}
+            serverUrl={settings.serverUrl}
+            token={settings.token}
+            corsProxy={settings.corsProxy}
+            onPreviewImage={handlePreviewImage}
           />
         )}
       </div>
@@ -1102,6 +1135,18 @@ export const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
+      />
+
+      {/* Image Preview Modal */}
+      <ImagePreviewModal
+        isOpen={previewState.isOpen}
+        onClose={handleClosePreview}
+        files={previewState.files}
+        currentIndex={previewState.currentIndex}
+        onNavigate={handleNavigatePreview}
+        serverUrl={settings.serverUrl}
+        token={settings.token}
+        corsProxy={settings.corsProxy}
       />
     </div>
   );
