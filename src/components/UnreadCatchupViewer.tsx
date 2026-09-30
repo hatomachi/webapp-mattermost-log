@@ -14,7 +14,6 @@ import {
   getChannelPosts,
   viewChannel,
   formatUserDisplayName,
-  formatFileSize,
   getPostReactions,
   getGroupedReactions,
   formatEmojiDisplay,
@@ -34,9 +33,6 @@ import {
   RefreshCw,
   Sparkles,
   ArrowLeft,
-  FileText,
-  Image as ImageIcon,
-  Paperclip,
   Loader2,
   AtSign,
   BookOpen,
@@ -100,6 +96,430 @@ interface ChannelCatchupState {
   error?: string;
 }
 
+// 純粋ヘルパー関数
+const formatCatchupTime = (timestamp: number, showSeconds: boolean) => {
+  const d = new Date(timestamp);
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  if (!showSeconds) return `${h}:${m}`;
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+};
+
+const getCatchupUserColor = (userId: string, name: string) => {
+  const colors = [
+    'text-emerald-400',
+    'text-sky-400',
+    'text-amber-400',
+    'text-teal-400',
+    'text-cyan-400',
+    'text-indigo-400',
+    'text-rose-400',
+    'text-yellow-400',
+    'text-lime-400',
+    'text-pink-400',
+  ];
+  let hash = 0;
+  const key = userId || name;
+  for (let i = 0; i < key.length; i++) {
+    hash = (hash << 5) - hash + key.charCodeAt(i);
+    hash |= 0;
+  }
+  return colors[Math.abs(hash) % colors.length];
+};
+
+const getCatchupChannelIcon = (type: string) => {
+  switch (type) {
+    case 'P':
+      return <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+    case 'D':
+      return <User className="w-3.5 h-3.5 text-sky-400 shrink-0" />;
+    case 'G':
+      return <Users className="w-3.5 h-3.5 text-purple-400 shrink-0" />;
+    default:
+      return <Hash className="w-3.5 h-3.5 text-zinc-400 shrink-0" />;
+  }
+};
+
+// 独立・メモ化されたチャンネルカードコンポーネント
+interface UnreadChannelCardProps {
+  state: ChannelCatchupState;
+  showUnreadOnly: boolean;
+  userCache: Record<string, MattermostUser>;
+  serverUrl: string;
+  token: string;
+  corsProxy?: string;
+  teams?: MattermostTeam[];
+  webUrl?: string;
+  fontClass: string;
+  showSeconds: boolean;
+  showTeamBadge: boolean;
+  collapseNewlines: boolean;
+  showReactions: boolean;
+  currentUserId?: string;
+  onSelectChannel: (channel: MattermostChannel) => void;
+  onMarkAsRead: (channelId: string) => void;
+  onOpenAiWithChannelPosts?: (channel: MattermostChannel, posts: MattermostPost[]) => void;
+  onToggleChannelSubscription?: (channelId: string) => void;
+  onOpenReactionPicker: (postId: string) => void;
+  onToggleReaction: (postId: string, emojiName: string) => Promise<void>;
+  onPreviewImage?: (files: MattermostFileInfo[], index: number) => void;
+}
+
+const UnreadChannelCard: React.FC<UnreadChannelCardProps> = React.memo(({
+  state,
+  showUnreadOnly,
+  userCache,
+  serverUrl,
+  token,
+  corsProxy,
+  teams,
+  webUrl,
+  fontClass,
+  showSeconds,
+  showTeamBadge,
+  collapseNewlines,
+  showReactions,
+  currentUserId,
+  onSelectChannel,
+  onMarkAsRead,
+  onOpenAiWithChannelPosts,
+  onToggleChannelSubscription,
+  onOpenReactionPicker,
+  onToggleReaction,
+  onPreviewImage,
+}) => {
+  const { channel, posts, isLoading, isMarkingRead, unreadCount, mentionCount, error } = state;
+  const mmUrl = useMemo(
+    () => buildMattermostChannelUrl(serverUrl, channel, teams, webUrl),
+    [serverUrl, channel, teams, webUrl]
+  );
+
+  const lastViewed = state.member.last_viewed_at || 0;
+
+  // 未読のみ表示トグルに応じた投稿フィルタリング（useMemo でキャッシュ）
+  const visiblePosts = useMemo(() => {
+    if (!showUnreadOnly) return posts;
+    return posts.filter((p) => p.create_at > lastViewed);
+  }, [posts, showUnreadOnly, lastViewed]);
+
+  const renderFormattedText = (text: string) => {
+    if (!text) return null;
+    const formatted = collapseNewlines ? text.replace(/\r?\n+/g, ' ') : text;
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = formatted.split(urlRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={index}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sky-400 hover:text-sky-300 underline underline-offset-2 break-all select-text"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </a>
+        );
+      }
+      return <span key={index}>{part}</span>;
+    });
+  };
+
+  const renderAttachments = (post: MattermostPost) => {
+    return (
+      <AttachmentList
+        post={post}
+        serverUrl={serverUrl}
+        token={token}
+        corsProxy={corsProxy}
+        onPreviewImage={onPreviewImage || (() => {})}
+        className="mt-0.5"
+      />
+    );
+  };
+
+  const renderReactions = (post: MattermostPost) => {
+    if (!showReactions) return null;
+    const reactions = getPostReactions(post);
+    if (reactions.length === 0) return null;
+    const grouped = getGroupedReactions(reactions);
+    if (grouped.length === 0) return null;
+
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1 ml-1.5 align-baseline select-none">
+        {grouped.map((r) => {
+          const { display, isUnicode } = formatEmojiDisplay(r.name);
+          const hasReacted = Boolean(currentUserId && r.users.includes(currentUserId));
+          const userNames = r.users
+            .map((uid) => {
+              const u = userCache[uid];
+              return formatUserDisplayName(u);
+            })
+            .filter(Boolean)
+            .join(', ');
+          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}\n${
+            hasReacted ? 'クリックでスタンプ解除' : 'クリックでスタンプを被せる'
+          }`;
+
+          return (
+            <button
+              key={r.name}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleReaction(post.id, r.name);
+              }}
+              title={tooltip}
+              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors cursor-pointer select-none ${
+                hasReacted
+                  ? 'bg-sky-950/80 border-sky-500/80 text-sky-200 hover:border-sky-400 font-semibold ring-1 ring-sky-500/30'
+                  : isUnicode
+                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800'
+              }`}
+            >
+              <span className={isUnicode ? 'text-xs -my-0.5' : 'text-[10px]'}>{display}</span>
+              <span className={`text-[9px] font-semibold ${hasReacted ? 'text-sky-300' : 'text-zinc-400'}`}>
+                {r.count}
+              </span>
+            </button>
+          );
+        })}
+      </span>
+    );
+  };
+
+  return (
+    <div className="bg-zinc-900/60 border border-zinc-800 rounded-lg overflow-hidden shadow-lg transition-all">
+      {/* Channel Header (Sticky) */}
+      <div className="bg-zinc-900 px-3 py-2 border-b border-zinc-800 flex items-center justify-between sticky top-0 z-10">
+        <div className="flex items-center space-x-2 min-w-0">
+          {getCatchupChannelIcon(channel.type)}
+
+          {showTeamBadge && channel.team_display_name && (
+            <span className="text-[10px] bg-zinc-800 text-zinc-300 px-1.5 py-0.2 rounded shrink-0 max-w-[90px] truncate border border-zinc-700">
+              {channel.team_display_name}
+            </span>
+          )}
+
+          {mmUrl ? (
+            <a
+              href={mmUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-bold text-xs text-zinc-100 hover:text-emerald-400 truncate flex items-center space-x-1 group/title"
+              title={`Mattermostで開く (${mmUrl})`}
+            >
+              <span className="truncate group-hover/title:underline underline-offset-2">
+                {channel.display_name || channel.name}
+              </span>
+              <ExternalLink className="w-2.5 h-2.5 opacity-60 group-hover/title:opacity-100 shrink-0" />
+            </a>
+          ) : (
+            <span className="font-bold text-xs text-zinc-100 truncate">
+              {channel.display_name || channel.name}
+            </span>
+          )}
+
+          {/* Unread badge */}
+          <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.2 rounded border border-zinc-700 shrink-0">
+            {unreadCount} 件未読
+          </span>
+
+          {/* Mention badge */}
+          {mentionCount > 0 && (
+            <span className="flex items-center space-x-0.5 text-[10px] bg-rose-950 border border-rose-700 text-rose-300 px-1.5 py-0.2 rounded shrink-0 font-bold">
+              <AtSign className="w-2.5 h-2.5 text-rose-400" />
+              <span>{mentionCount}</span>
+            </span>
+          )}
+
+          {/* Low priority badge */}
+          {state.isMentionOnly && (
+            <span className="flex items-center space-x-0.5 text-[10px] bg-amber-950/80 border border-amber-800 text-amber-300 px-1.5 py-0.2 rounded shrink-0 font-semibold">
+              <BellOff className="w-2.5 h-2.5 text-amber-400" />
+              <span className="hidden sm:inline">低優先</span>
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center space-x-2 shrink-0">
+          {onToggleChannelSubscription && (
+            <button
+              onClick={() => onToggleChannelSubscription(channel.id)}
+              className={`text-[11px] p-1 rounded flex items-center space-x-1 border transition-colors ${
+                state.isMentionOnly
+                  ? 'bg-amber-950/70 border-amber-700/80 text-amber-300 hover:bg-amber-900'
+                  : 'bg-zinc-800/80 border-zinc-700/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+              }`}
+              title={
+                state.isMentionOnly
+                  ? '現在「メンションのみ追う」設定（クリックで通常追うに変更）'
+                  : '現在「通常追う」設定（クリックでメンションのみ追うに変更）'
+              }
+            >
+              {state.isMentionOnly ? (
+                <>
+                  <BellOff className="w-3 h-3 text-amber-400" />
+                  <span className="hidden md:inline">メンションのみ</span>
+                </>
+              ) : (
+                <>
+                  <Bell className="w-3 h-3 text-zinc-400" />
+                  <span className="hidden md:inline">通常</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {onOpenAiWithChannelPosts && posts.length > 0 && (
+            <button
+              onClick={() => onOpenAiWithChannelPosts(channel, posts)}
+              className="text-zinc-400 hover:text-emerald-300 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
+              title="このチャンネルの未読をAIに添付して相談"
+            >
+              <Bot className="w-3 h-3 text-emerald-400" />
+              <span className="hidden sm:inline">AI相談</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => onSelectChannel(channel)}
+            className="text-zinc-400 hover:text-zinc-200 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
+            title="このチャンネルをログビューで開く"
+          >
+            <BookOpen className="w-3 h-3 text-sky-400" />
+            <span className="hidden sm:inline">開く</span>
+          </button>
+
+          {mmUrl && (
+            <a
+              href={mmUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-zinc-400 hover:text-emerald-400 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
+              title="Mattermostで開く"
+            >
+              <ExternalLink className="w-3 h-3 text-emerald-400" />
+              <span className="hidden sm:inline">Mattermost</span>
+            </a>
+          )}
+
+          <button
+            onClick={() => onMarkAsRead(channel.id)}
+            disabled={isMarkingRead}
+            className="flex items-center space-x-1 text-[11px] bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 px-2 py-0.5 rounded transition-colors disabled:opacity-50"
+            title="このチャンネルを既読にする"
+          >
+            {isMarkingRead ? (
+              <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+            ) : (
+              <Check className="w-3 h-3 text-emerald-400" />
+            )}
+            <span>既読</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Posts Content */}
+      <div className="p-2 sm:p-3 divide-y divide-zinc-800/40">
+        {isLoading ? (
+          <div className="py-6 flex items-center justify-center space-x-2 text-zinc-500 text-xs">
+            <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+            <span>投稿を取得中...</span>
+          </div>
+        ) : error ? (
+          <div className="py-4 text-center text-xs text-rose-400">{error}</div>
+        ) : visiblePosts.length === 0 ? (
+          <div className="py-4 text-center text-xs text-zinc-500 italic">
+            未読メッセージはありません
+          </div>
+        ) : (
+          visiblePosts.map((post) => {
+            const user = userCache[post.user_id];
+            const displayName = formatUserDisplayName(user, post.props?.override_username);
+            const userColor = getCatchupUserColor(post.user_id, displayName);
+            const isUnread = post.create_at > lastViewed;
+
+            return (
+              <div
+                key={post.id}
+                className={`group py-1 hover:bg-zinc-800/30 px-1 rounded transition-colors ${fontClass}`}
+              >
+                <div className="flex items-baseline space-x-1.5">
+                  {/* 未読ドット */}
+                  <span className="w-1.5 shrink-0 flex items-center justify-center self-center">
+                    {isUnread && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block" />
+                    )}
+                  </span>
+
+                  {/* Timestamp */}
+                  <span className="text-zinc-500 select-none shrink-0 font-mono text-[10px]">
+                    [{formatCatchupTime(post.create_at, showSeconds)}]
+                  </span>
+
+                  {/* Author */}
+                  <span
+                    className={`font-semibold shrink-0 select-none max-w-[120px] sm:max-w-[160px] truncate ${userColor}`}
+                    title={displayName}
+                  >
+                    {displayName}:
+                  </span>
+
+                  {/* Message */}
+                  <div className="flex-1 text-zinc-200 break-words whitespace-pre-wrap select-text">
+                    {renderFormattedText(post.message)}
+                    {renderReactions(post)}
+                    {onOpenReactionPicker && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenReactionPicker(post.id);
+                        }}
+                        className="inline-flex items-center space-x-0.5 ml-1 text-[10px] px-1 py-0.2 rounded text-zinc-500 hover:text-amber-300 hover:bg-amber-950/40 select-none align-baseline cursor-pointer transition-opacity opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                        title="スタンプを押す"
+                      >
+                        <Smile className="w-2.5 h-2.5" />
+                        <span className="text-[9px]">スタンプ</span>
+                      </button>
+                    )}
+                    {renderAttachments(post)}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Channel Footer Mark-As-Read Action */}
+      <div className="p-2.5 bg-zinc-900/60 border-t border-zinc-800 flex items-center justify-between">
+        <span className="text-[10px] text-zinc-500">
+          ここまで読み終えたら既読にできます
+        </span>
+
+        <button
+          onClick={() => onMarkAsRead(channel.id)}
+          disabled={isMarkingRead}
+          className="flex items-center space-x-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1.5 rounded shadow shadow-emerald-950 transition-colors disabled:opacity-50"
+        >
+          {isMarkingRead ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Check className="w-3.5 h-3.5" />
+          )}
+          <span>このチャンネルを既読にする</span>
+        </button>
+      </div>
+    </div>
+  );
+});
+
 export const UnreadCatchupViewer: React.FC<Props> = ({
   serverUrl,
   token,
@@ -158,7 +578,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     base: 'text-base leading-normal',
   }[fontSize];
 
-  // 1. 未読があるチャンネルを抽出
+  // 1. 未読があるチャンネルを抽出（初期段階で最新未読タイムスタンプ降順に決定論的ソート）
   const unreadChannels = useMemo(() => {
     return channels
       .map((ch) => {
@@ -185,10 +605,13 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
       })
       .filter((item): item is UnreadChannelItem => item !== null)
       .sort((a, b) => {
-        // メンションがあるものを最優先、次に最新更新順
-        if (a.mentionCount !== b.mentionCount) {
-          return b.mentionCount - a.mentionCount;
+        // メンションがあるチャンネルを最優先（メンションあり > なし）
+        const aMention = a.mentionCount > 0 ? 1 : 0;
+        const bMention = b.mentionCount > 0 ? 1 : 0;
+        if (aMention !== bMention) {
+          return bMention - aMention;
         }
+        // 未読のタイムスタンプが最近の順（チャンネル最終投稿日時降順）
         return b.channel.last_post_at - a.channel.last_post_at;
       });
   }, [channels, channelMembers, channelSubscriptions]);
@@ -318,7 +741,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   }, [refreshKey]);
 
   // 3. 単一チャンネルの既読化
-  const handleMarkAsRead = async (channelId: string) => {
+  const handleMarkAsRead = useCallback(async (channelId: string) => {
     setChannelStates((prev) => {
       if (!prev[channelId]) return prev;
       return {
@@ -358,7 +781,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
         };
       });
     }
-  };
+  }, [serverUrl, token, corsProxy, onChannelMarkedAsRead]);
 
   // channelSubscriptions が変更されたら channelStates の isMentionOnly も動的同期
   useEffect(() => {
@@ -378,10 +801,12 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     });
   }, [channelSubscriptions]);
 
-  // まだ既読になっていない全未読チャンネル
+  // まだ既読になっていない全未読チャンネル（unreadChannels の決定論的順序を維持）
   const activeChannelListAll = useMemo(() => {
-    return Object.values(channelStates).filter((s) => !s.isRead);
-  }, [channelStates]);
+    return unreadChannels
+      .map((item) => channelStates[item.channel.id])
+      .filter((s): s is ChannelCatchupState => Boolean(s && !s.isRead));
+  }, [unreadChannels, channelStates]);
 
   // メイン未読リスト: 「通常チャンネル」または「メンションのみ設定だがメンションがあるチャンネル」
   const mainUnreadList = useMemo(() => {
@@ -393,34 +818,12 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     return activeChannelListAll.filter((s) => s.isMentionOnly && s.mentionCount === 0);
   }, [activeChannelListAll]);
 
-  // チャンネルの最新未読投稿タイムスタンプを取得するヘルパー
-  const getLatestUnreadTimestamp = useCallback((state: ChannelCatchupState): number => {
-    const lastViewed = state.member.last_viewed_at || 0;
-    const unreadPosts = state.posts.filter(p => p.create_at > lastViewed);
-    if (unreadPosts.length > 0) {
-      return Math.max(...unreadPosts.map(p => p.create_at));
-    }
-    // まだ投稿未取得 or 未読投稿がない場合は last_post_at で代替
-    return state.channel.last_post_at;
-  }, []);
-
-  // 現在のタブに応じた表示チャンネルリスト（最新未読タイムスタンプ降順）
+  // 現在のタブに応じた表示チャンネルリスト（並び順は unreadChannels をそのまま維持し、余計なソートは一切行わない）
   const displayedChannelList = useMemo(() => {
-    let list: ChannelCatchupState[];
-    if (activeTab === 'main') list = mainUnreadList;
-    else if (activeTab === 'mention_only') list = mentionOnlyUnreadList;
-    else list = activeChannelListAll;
-
-    return [...list].sort((a, b) => {
-      // メンションがあるものを最優先
-      const aMention = a.mentionCount > 0 ? 1 : 0;
-      const bMention = b.mentionCount > 0 ? 1 : 0;
-      if (aMention !== bMention) return bMention - aMention;
-
-      // 最新未読投稿のタイムスタンプで降順ソート
-      return getLatestUnreadTimestamp(b) - getLatestUnreadTimestamp(a);
-    });
-  }, [activeTab, mainUnreadList, mentionOnlyUnreadList, activeChannelListAll, getLatestUnreadTimestamp]);
+    if (activeTab === 'main') return mainUnreadList;
+    if (activeTab === 'mention_only') return mentionOnlyUnreadList;
+    return activeChannelListAll;
+  }, [activeTab, mainUnreadList, mentionOnlyUnreadList, activeChannelListAll]);
 
   const totalRemainingUnreads = useMemo(() => {
     return displayedChannelList.reduce((acc, cur) => acc + (cur.unreadCount || 1), 0);
@@ -469,7 +872,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     }
   };
 
-  // 5. メンションのみ（低優先）未読チャンネルのみを一括既読化（メインタブからの一発一掃ボタン）
+  // 5. メンションのみ（低優先）未読チャンネルのみを一括既読化
   const handleMarkMentionOnlyAsRead = async () => {
     const targets = mentionOnlyUnreadList;
     if (targets.length === 0) return;
@@ -505,77 +908,8 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     }
   };
 
-  const formatTime = (timestamp: number) => {
-    const d = new Date(timestamp);
-    const h = String(d.getHours()).padStart(2, '0');
-    const m = String(d.getMinutes()).padStart(2, '0');
-    if (!showSeconds) return `${h}:${m}`;
-    const s = String(d.getSeconds()).padStart(2, '0');
-    return `${h}:${m}:${s}`;
-  };
-
-  const getUserColor = (userId: string, name: string) => {
-    const colors = [
-      'text-emerald-400',
-      'text-sky-400',
-      'text-amber-400',
-      'text-teal-400',
-      'text-cyan-400',
-      'text-indigo-400',
-      'text-rose-400',
-      'text-yellow-400',
-      'text-lime-400',
-      'text-pink-400',
-    ];
-    let hash = 0;
-    const key = userId || name;
-    for (let i = 0; i < key.length; i++) {
-      hash = (hash << 5) - hash + key.charCodeAt(i);
-      hash |= 0;
-    }
-    return colors[Math.abs(hash) % colors.length];
-  };
-
-  const renderFormattedText = (text: string) => {
-    if (!text) return null;
-    const formatted = collapseNewlines ? text.replace(/\r?\n+/g, ' ') : text;
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const parts = formatted.split(urlRegex);
-
-    return parts.map((part, index) => {
-      if (part.match(urlRegex)) {
-        return (
-          <a
-            key={index}
-            href={part}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sky-400 hover:text-sky-300 underline underline-offset-2 break-all select-text"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {part}
-          </a>
-        );
-      }
-      return <span key={index}>{part}</span>;
-    });
-  };
-
-  const renderAttachments = (post: MattermostPost) => {
-    return (
-      <AttachmentList
-        post={post}
-        serverUrl={serverUrl}
-        token={token}
-        corsProxy={corsProxy}
-        onPreviewImage={onPreviewImage || (() => {})}
-        className="mt-0.5"
-      />
-    );
-  };
-
-  // 内部 channelStates も楽観的更新するリアクショントグルハンドラー
-  const handleToggleReactionInternal = async (postId: string, emojiName: string) => {
+  // 内部 channelStates も楽観的更新するリアクショントグルハンドラー（useCallback化）
+  const handleToggleReactionInternal = useCallback(async (postId: string, emojiName: string) => {
     const cleanName = emojiName.trim().replace(/^:+|:+$/g, '');
     if (!cleanName) return;
 
@@ -626,71 +960,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     });
 
     await onToggleReaction?.(postId, cleanName);
-  };
-
-  const renderReactions = (post: MattermostPost) => {
-    if (!showReactions) return null;
-    const reactions = getPostReactions(post);
-    if (reactions.length === 0) return null;
-    const grouped = getGroupedReactions(reactions);
-    if (grouped.length === 0) return null;
-
-    return (
-      <span className="inline-flex flex-wrap items-center gap-1 ml-1.5 align-baseline select-none">
-        {grouped.map((r) => {
-          const { display, isUnicode } = formatEmojiDisplay(r.name);
-          const hasReacted = Boolean(currentUserId && r.users.includes(currentUserId));
-          const userNames = r.users
-            .map((uid) => {
-              const u = userCache[uid];
-              return formatUserDisplayName(u);
-            })
-            .filter(Boolean)
-            .join(', ');
-          const tooltip = `:${r.name}: (${r.count})${userNames ? `\n${userNames}` : ''}\n${
-            hasReacted ? 'クリックでスタンプ解除' : 'クリックでスタンプを被せる'
-          }`;
-
-          return (
-            <button
-              key={r.name}
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleToggleReactionInternal(post.id, r.name);
-              }}
-              title={tooltip}
-              className={`inline-flex items-center space-x-0.5 px-1 py-0 rounded border text-[10px] leading-tight font-mono transition-colors cursor-pointer select-none ${
-                hasReacted
-                  ? 'bg-sky-950/80 border-sky-500/80 text-sky-200 hover:border-sky-400 font-semibold ring-1 ring-sky-500/30'
-                  : isUnicode
-                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800'
-                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800'
-              }`}
-            >
-              <span className={isUnicode ? 'text-xs -my-0.5' : 'text-[10px]'}>{display}</span>
-              <span className={`text-[9px] font-semibold ${hasReacted ? 'text-sky-300' : 'text-zinc-400'}`}>
-                {r.count}
-              </span>
-            </button>
-          );
-        })}
-      </span>
-    );
-  };
-
-  const getChannelIcon = (type: string) => {
-    switch (type) {
-      case 'P':
-        return <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
-      case 'D':
-        return <User className="w-3.5 h-3.5 text-sky-400 shrink-0" />;
-      case 'G':
-        return <Users className="w-3.5 h-3.5 text-purple-400 shrink-0" />;
-      default:
-        return <Hash className="w-3.5 h-3.5 text-zinc-400 shrink-0" />;
-    }
-  };
+  }, [currentUserId, onToggleReaction]);
 
   const handleManualRefresh = async () => {
     setIsInitializing(true);
@@ -926,258 +1196,32 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
             )}
           </div>
         ) : (
-          displayedChannelList.map((state) => {
-            const { channel, posts, isLoading, isMarkingRead, unreadCount, mentionCount, error } =
-              state;
-            const mmUrl = buildMattermostChannelUrl(serverUrl, channel, teams, webUrl);
-
-            return (
-              <div
-                key={channel.id}
-                className="bg-zinc-900/60 border border-zinc-800 rounded-lg overflow-hidden shadow-lg transition-all"
-              >
-                {/* Channel Header (Sticky) */}
-                <div className="bg-zinc-900 px-3 py-2 border-b border-zinc-800 flex items-center justify-between sticky top-0 z-10">
-                  <div className="flex items-center space-x-2 min-w-0">
-                    {getChannelIcon(channel.type)}
-
-                    {showTeamBadge && channel.team_display_name && (
-                      <span className="text-[10px] bg-zinc-800 text-zinc-300 px-1.5 py-0.2 rounded shrink-0 max-w-[90px] truncate border border-zinc-700">
-                        {channel.team_display_name}
-                      </span>
-                    )}
-
-                    {mmUrl ? (
-                      <a
-                        href={mmUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-bold text-xs text-zinc-100 hover:text-emerald-400 truncate flex items-center space-x-1 group/title"
-                        title={`Mattermostで開く (${mmUrl})`}
-                      >
-                        <span className="truncate group-hover/title:underline underline-offset-2">
-                          {channel.display_name || channel.name}
-                        </span>
-                        <ExternalLink className="w-2.5 h-2.5 opacity-60 group-hover/title:opacity-100 shrink-0" />
-                      </a>
-                    ) : (
-                      <span className="font-bold text-xs text-zinc-100 truncate">
-                        {channel.display_name || channel.name}
-                      </span>
-                    )}
-
-                    {/* Unread badge */}
-                    <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.2 rounded border border-zinc-700 shrink-0">
-                      {unreadCount} 件未読
-                    </span>
-
-                    {/* Mention badge */}
-                    {mentionCount > 0 && (
-                      <span className="flex items-center space-x-0.5 text-[10px] bg-rose-950 border border-rose-700 text-rose-300 px-1.5 py-0.2 rounded shrink-0 font-bold">
-                        <AtSign className="w-2.5 h-2.5 text-rose-400" />
-                        <span>{mentionCount}</span>
-                      </span>
-                    )}
-
-                    {/* Low priority badge */}
-                    {state.isMentionOnly && (
-                      <span className="flex items-center space-x-0.5 text-[10px] bg-amber-950/80 border border-amber-800 text-amber-300 px-1.5 py-0.2 rounded shrink-0 font-semibold">
-                        <BellOff className="w-2.5 h-2.5 text-amber-400" />
-                        <span className="hidden sm:inline">低優先</span>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center space-x-2 shrink-0">
-                    {onToggleChannelSubscription && (
-                      <button
-                        onClick={() => onToggleChannelSubscription(channel.id)}
-                        className={`text-[11px] p-1 rounded flex items-center space-x-1 border transition-colors ${
-                          state.isMentionOnly
-                            ? 'bg-amber-950/70 border-amber-700/80 text-amber-300 hover:bg-amber-900'
-                            : 'bg-zinc-800/80 border-zinc-700/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
-                        }`}
-                        title={
-                          state.isMentionOnly
-                            ? '現在「メンションのみ追う」設定（クリックで通常追うに変更）'
-                            : '現在「通常追う」設定（クリックでメンションのみ追うに変更）'
-                        }
-                      >
-                        {state.isMentionOnly ? (
-                          <>
-                            <BellOff className="w-3 h-3 text-amber-400" />
-                            <span className="hidden md:inline">メンションのみ</span>
-                          </>
-                        ) : (
-                          <>
-                            <Bell className="w-3 h-3 text-zinc-400" />
-                            <span className="hidden md:inline">通常</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    {onOpenAiWithChannelPosts && posts.length > 0 && (
-                      <button
-                        onClick={() => onOpenAiWithChannelPosts(channel, posts)}
-                        className="text-zinc-400 hover:text-emerald-300 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
-                        title="このチャンネルの未読をAIに添付して相談"
-                      >
-                        <Bot className="w-3 h-3 text-emerald-400" />
-                        <span className="hidden sm:inline">AI相談</span>
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => onSelectChannel(channel)}
-                      className="text-zinc-400 hover:text-zinc-200 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
-                      title="このチャンネルをログビューで開く"
-                    >
-                      <BookOpen className="w-3 h-3 text-sky-400" />
-                      <span className="hidden sm:inline">開く</span>
-                    </button>
-
-                    {mmUrl && (
-                      <a
-                        href={mmUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-zinc-400 hover:text-emerald-400 p-1 hover:bg-zinc-800 rounded text-[11px] flex items-center space-x-1"
-                        title="Mattermostで開く"
-                      >
-                        <ExternalLink className="w-3 h-3 text-emerald-400" />
-                        <span className="hidden sm:inline">Mattermost</span>
-                      </a>
-                    )}
-
-                    <button
-                      onClick={() => handleMarkAsRead(channel.id)}
-                      disabled={isMarkingRead}
-                      className="flex items-center space-x-1 text-[11px] bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 px-2 py-0.5 rounded transition-colors disabled:opacity-50"
-                      title="このチャンネルを既読にする"
-                    >
-                      {isMarkingRead ? (
-                        <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
-                      ) : (
-                        <Check className="w-3 h-3 text-emerald-400" />
-                      )}
-                      <span>既読</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Posts Content */}
-                <div className="p-2 sm:p-3 divide-y divide-zinc-800/40">
-                  {isLoading ? (
-                    <div className="py-6 flex items-center justify-center space-x-2 text-zinc-500 text-xs">
-                      <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                      <span>投稿を取得中...</span>
-                    </div>
-                  ) : error ? (
-                    <div className="py-4 text-center text-xs text-rose-400">{error}</div>
-                  ) : posts.length === 0 ? (
-                    <div className="py-4 text-center text-xs text-zinc-500 italic">
-                      未読メッセージはありません
-                    </div>
-                  ) : (() => {
-                    const lastViewed = state.member.last_viewed_at || 0;
-                    const visiblePosts = showUnreadOnly
-                      ? posts.filter((p) => p.create_at > lastViewed)
-                      : posts;
-
-                    if (visiblePosts.length === 0) {
-                      return (
-                        <div className="py-4 text-center text-xs text-zinc-500 italic">
-                          未読メッセージはありません
-                        </div>
-                      );
-                    }
-
-                    return visiblePosts.map((post) => {
-                      const user = userCache[post.user_id];
-                      const displayName = formatUserDisplayName(
-                        user,
-                        post.props?.override_username
-                      );
-                      const userColor = getUserColor(post.user_id, displayName);
-                      const isUnread = post.create_at > lastViewed;
-
-                      return (
-                        <div
-                          key={post.id}
-                          className={`group py-1 hover:bg-zinc-800/30 px-1 rounded transition-colors ${fontClass}`}
-                        >
-                          <div className="flex items-baseline space-x-1.5">
-                            {/* 未読ドット */}
-                            <span className="w-1.5 shrink-0 flex items-center justify-center self-center">
-                              {isUnread && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block" />
-                              )}
-                            </span>
-
-                            {/* Timestamp */}
-                            <span className="text-zinc-500 select-none shrink-0 font-mono text-[10px]">
-                              [{formatTime(post.create_at)}]
-                            </span>
-
-                            {/* Author */}
-                            <span
-                              className={`font-semibold shrink-0 select-none max-w-[120px] sm:max-w-[160px] truncate ${userColor}`}
-                              title={displayName}
-                            >
-                              {displayName}:
-                            </span>
-
-                            {/* Message */}
-                            <div className="flex-1 text-zinc-200 break-words whitespace-pre-wrap select-text">
-                              {renderFormattedText(post.message)}
-                              {renderReactions(post)}
-                              {onAddReaction && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPickerPostId(post.id);
-                                  }}
-                                  className="inline-flex items-center space-x-0.5 ml-1 text-[10px] px-1 py-0.2 rounded text-zinc-500 hover:text-amber-300 hover:bg-amber-950/40 select-none align-baseline cursor-pointer transition-opacity opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
-                                  title="スタンプを押す"
-                                >
-                                  <Smile className="w-2.5 h-2.5" />
-                                  <span className="text-[9px]">スタンプ</span>
-                                </button>
-                              )}
-                              {renderAttachments(post)}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()
-                  }
-                </div>
-
-                {/* Channel Footer Mark-As-Read Action */}
-                <div className="p-2.5 bg-zinc-900/60 border-t border-zinc-800 flex items-center justify-between">
-                  <span className="text-[10px] text-zinc-500">
-                    ここまで読み終えたら既読にできます
-                  </span>
-
-                  <button
-                    onClick={() => handleMarkAsRead(channel.id)}
-                    disabled={isMarkingRead}
-                    className="flex items-center space-x-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1.5 rounded shadow shadow-emerald-950 transition-colors disabled:opacity-50"
-                  >
-                    {isMarkingRead ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Check className="w-3.5 h-3.5" />
-                    )}
-                    <span>このチャンネルを既読にする</span>
-                  </button>
-                </div>
-              </div>
-            );
-          })
+          displayedChannelList.map((state) => (
+            <UnreadChannelCard
+              key={state.channel.id}
+              state={state}
+              showUnreadOnly={showUnreadOnly}
+              userCache={userCache}
+              serverUrl={serverUrl}
+              token={token}
+              corsProxy={corsProxy}
+              teams={teams}
+              webUrl={webUrl}
+              fontClass={fontClass}
+              showSeconds={showSeconds}
+              showTeamBadge={showTeamBadge}
+              collapseNewlines={collapseNewlines}
+              showReactions={showReactions}
+              currentUserId={currentUserId}
+              onSelectChannel={onSelectChannel}
+              onMarkAsRead={handleMarkAsRead}
+              onOpenAiWithChannelPosts={onOpenAiWithChannelPosts}
+              onToggleChannelSubscription={onToggleChannelSubscription}
+              onOpenReactionPicker={setPickerPostId}
+              onToggleReaction={handleToggleReactionInternal}
+              onPreviewImage={onPreviewImage}
+            />
+          ))
         )}
       </div>
 
