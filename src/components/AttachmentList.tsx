@@ -19,7 +19,7 @@ interface AttachmentListProps {
   className?: string;
 }
 
-export const AttachmentList: React.FC<AttachmentListProps> = ({
+export const AttachmentList: React.FC<AttachmentListProps> = React.memo(({
   post,
   serverUrl,
   token,
@@ -27,13 +27,15 @@ export const AttachmentList: React.FC<AttachmentListProps> = ({
   onPreviewImage,
   className = '',
 }) => {
-  const initialFiles = post.metadata?.files || [];
-  const [resolvedFiles, setResolvedFiles] = useState<MattermostFileInfo[]>(initialFiles);
+  const initialFiles = post.metadata?.files;
+  const [resolvedFiles, setResolvedFiles] = useState<MattermostFileInfo[]>(initialFiles || []);
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
+
+  const fileIdsKey = post.file_ids ? post.file_ids.join(',') : '';
 
   // metadata.files がなく file_ids のみ存在する場合、バックグラウンドで解決
   useEffect(() => {
-    if (initialFiles.length > 0) {
+    if (initialFiles && initialFiles.length > 0) {
       setResolvedFiles(initialFiles);
       return;
     }
@@ -49,9 +51,9 @@ export const AttachmentList: React.FC<AttachmentListProps> = ({
         isCancelled = true;
       };
     }
-  }, [post.id, post.file_ids, initialFiles, serverUrl, token, corsProxy]);
+  }, [post.id, fileIdsKey, initialFiles, serverUrl, token, corsProxy]);
 
-  const files = resolvedFiles.length > 0 ? resolvedFiles : initialFiles;
+  const files = resolvedFiles.length > 0 ? resolvedFiles : (initialFiles || []);
 
   // 画像ファイルのみのリスト
   const imageFiles = useMemo(() => {
@@ -225,4 +227,4 @@ export const AttachmentList: React.FC<AttachmentListProps> = ({
       )}
     </div>
   );
-};
+});

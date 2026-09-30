@@ -115,12 +115,35 @@ export const loadUserCache = (): Record<string, MattermostUser> => {
   }
 };
 
-export const saveUserCache = (cache: Record<string, MattermostUser>): void => {
-  try {
-    localStorage.setItem(USER_CACHE_KEY, JSON.stringify(cache));
-  } catch (e) {
-    console.error('Failed to save user cache:', e);
+let saveUserCacheTimer: any = null;
+let pendingUserCache: Record<string, MattermostUser> | null = null;
+
+export const flushUserCache = (): void => {
+  if (saveUserCacheTimer) {
+    clearTimeout(saveUserCacheTimer);
+    saveUserCacheTimer = null;
   }
+  if (pendingUserCache) {
+    try {
+      localStorage.setItem(USER_CACHE_KEY, JSON.stringify(pendingUserCache));
+    } catch (e) {
+      console.error('Failed to save user cache:', e);
+    }
+  }
+};
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', flushUserCache);
+}
+
+export const saveUserCache = (cache: Record<string, MattermostUser>): void => {
+  pendingUserCache = cache;
+  if (saveUserCacheTimer) return;
+
+  saveUserCacheTimer = setTimeout(() => {
+    saveUserCacheTimer = null;
+    flushUserCache();
+  }, 1000);
 };
 
 export const loadChannelSubscriptions = (): Record<string, ChannelSubscriptionMode> => {

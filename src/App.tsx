@@ -135,13 +135,21 @@ export const App: React.FC = () => {
     userCacheRef.current = userCache;
   }, [userCache]);
 
+  const inFlightUserIdsRef = useRef<Set<string>>(new Set());
+
   // 未キャッシュのユーザープロファイルを解決するヘルパー
   const resolveMissingUsers = useCallback(
     async (userIdList: string[]) => {
       const missingUserIds = Array.from(
-        new Set(userIdList.filter((uid) => uid && !userCacheRef.current[uid]))
+        new Set(
+          userIdList.filter(
+            (uid) => uid && !userCacheRef.current[uid] && !inFlightUserIdsRef.current.has(uid)
+          )
+        )
       );
       if (missingUserIds.length === 0) return;
+
+      missingUserIds.forEach((uid) => inFlightUserIdsRef.current.add(uid));
 
       try {
         const fetchedUsers = await getUsersByIds(
@@ -162,6 +170,8 @@ export const App: React.FC = () => {
         }
       } catch (e) {
         console.warn('Failed to fetch user profiles:', e);
+      } finally {
+        missingUserIds.forEach((uid) => inFlightUserIdsRef.current.delete(uid));
       }
     },
     [settings.serverUrl, settings.token, settings.corsProxy]

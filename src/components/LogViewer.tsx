@@ -724,6 +724,12 @@ export const LogViewer: React.FC<Props> = ({
 
   // 添付ファイル描画
   const renderAttachments = (post: MattermostPost) => {
+    const hasAttachments = Boolean(
+      (post.file_ids && post.file_ids.length > 0) ||
+      (post.metadata?.files && post.metadata.files.length > 0)
+    );
+    if (!hasAttachments) return null;
+
     return (
       <AttachmentList
         post={post}
