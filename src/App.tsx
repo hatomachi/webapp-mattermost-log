@@ -1095,6 +1095,7 @@ export const App: React.FC = () => {
             onClearAppliedDraft={() => setAppliedAiDraft(null)}
             isUnread={isCurrentChannelUnread}
             unreadCount={currentChannelUnreadCount}
+            lastViewedAt={activeMember?.last_viewed_at || 0}
             onMarkAsRead={handleMarkCurrentChannelAsRead}
             isMarkingRead={isMarkingCurrentChannelRead}
             isMentionOnly={isCurrentChannelMentionOnly}

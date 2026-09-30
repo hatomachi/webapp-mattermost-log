@@ -71,6 +71,7 @@ interface Props {
   onClearAppliedDraft?: () => void;
   isUnread?: boolean;
   unreadCount?: number;
+  lastViewedAt?: number;
   onMarkAsRead?: () => void;
   isMarkingRead?: boolean;
   isMentionOnly?: boolean;
@@ -114,6 +115,7 @@ export const LogViewer: React.FC<Props> = ({
   onClearAppliedDraft,
   isUnread = false,
   unreadCount = 0,
+  lastViewedAt = 0,
   onMarkAsRead,
   isMarkingRead = false,
   isMentionOnly = false,
@@ -1038,6 +1040,7 @@ export const LogViewer: React.FC<Props> = ({
           const currentThreadPosts = threadPosts[post.id] || [];
           const isThreadLoading = Boolean(loadingThreads[post.id]);
           const isReplyTarget = replyTarget?.postId === post.id;
+          const isUnread = Boolean(lastViewedAt && lastViewedAt > 0 && post.create_at > lastViewedAt);
 
           return (
             <React.Fragment key={post.id}>
@@ -1058,9 +1061,19 @@ export const LogViewer: React.FC<Props> = ({
                 }`}
               >
                 <div className="flex items-start space-x-1.5">
+                  {/* 未読ドット */}
+                  <span className="w-1.5 h-4 shrink-0 flex items-center justify-center self-start">
+                    {isUnread && (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block"
+                        title="未読の投稿"
+                      />
+                    )}
+                  </span>
+
                   <span className="text-zinc-600 shrink-0 text-[11px] select-none font-mono tracking-tight">
-                        [{formatTime(post.create_at)}]
-                      </span>
+                    [{formatTime(post.create_at)}]
+                  </span>
 
                       <div
                         className={`flex-1 min-w-0 break-words ${
@@ -1177,6 +1190,9 @@ export const LogViewer: React.FC<Props> = ({
                           );
                           const replyColor = getUserColor(reply.user_id, replyDisplayName);
                           const isReplyTargetReply = replyTarget?.postId === reply.id;
+                          const isReplyUnread = Boolean(
+                            lastViewedAt && lastViewedAt > 0 && reply.create_at > lastViewedAt
+                          );
 
                           return (
                             <div
@@ -1189,6 +1205,15 @@ export const LogViewer: React.FC<Props> = ({
                             >
                               <span className="text-sky-500/70 select-none shrink-0 text-[11px]">
                                 └──
+                              </span>
+                              {/* 未読ドット */}
+                              <span className="w-1.5 h-4 shrink-0 flex items-center justify-center self-start">
+                                {isReplyUnread && (
+                                  <span
+                                    className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block"
+                                    title="未読の投稿"
+                                  />
+                                )}
                               </span>
                               <span className="text-zinc-600 shrink-0 text-[11px] select-none font-mono tracking-tight">
                                 [{formatTime(reply.create_at)}]
