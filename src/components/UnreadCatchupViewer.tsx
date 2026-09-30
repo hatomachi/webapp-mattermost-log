@@ -44,6 +44,8 @@ import {
   Bell,
   BellOff,
   Smile,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface Props {
@@ -135,6 +137,7 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
   const [isMarkingMentionOnlyRead, setIsMarkingMentionOnlyRead] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [pickerPostId, setPickerPostId] = useState<string | null>(null);
+  const [showUnreadOnly, setShowUnreadOnly] = useState(true);
 
   // 関数・プロパティを ref に保持して useEffect の不要な再実行を防ぐ
   const resolveMissingUsersRef = useRef(resolveMissingUsers);
@@ -390,12 +393,34 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
     return activeChannelListAll.filter((s) => s.isMentionOnly && s.mentionCount === 0);
   }, [activeChannelListAll]);
 
-  // 現在のタブに応じた表示チャンネルリスト
+  // チャンネルの最新未読投稿タイムスタンプを取得するヘルパー
+  const getLatestUnreadTimestamp = useCallback((state: ChannelCatchupState): number => {
+    const lastViewed = state.member.last_viewed_at || 0;
+    const unreadPosts = state.posts.filter(p => p.create_at > lastViewed);
+    if (unreadPosts.length > 0) {
+      return Math.max(...unreadPosts.map(p => p.create_at));
+    }
+    // まだ投稿未取得 or 未読投稿がない場合は last_post_at で代替
+    return state.channel.last_post_at;
+  }, []);
+
+  // 現在のタブに応じた表示チャンネルリスト（最新未読タイムスタンプ降順）
   const displayedChannelList = useMemo(() => {
-    if (activeTab === 'main') return mainUnreadList;
-    if (activeTab === 'mention_only') return mentionOnlyUnreadList;
-    return activeChannelListAll;
-  }, [activeTab, mainUnreadList, mentionOnlyUnreadList, activeChannelListAll]);
+    let list: ChannelCatchupState[];
+    if (activeTab === 'main') list = mainUnreadList;
+    else if (activeTab === 'mention_only') list = mentionOnlyUnreadList;
+    else list = activeChannelListAll;
+
+    return [...list].sort((a, b) => {
+      // メンションがあるものを最優先
+      const aMention = a.mentionCount > 0 ? 1 : 0;
+      const bMention = b.mentionCount > 0 ? 1 : 0;
+      if (aMention !== bMention) return bMention - aMention;
+
+      // 最新未読投稿のタイムスタンプで降順ソート
+      return getLatestUnreadTimestamp(b) - getLatestUnreadTimestamp(a);
+    });
+  }, [activeTab, mainUnreadList, mentionOnlyUnreadList, activeChannelListAll, getLatestUnreadTimestamp]);
 
   const totalRemainingUnreads = useMemo(() => {
     return displayedChannelList.reduce((acc, cur) => acc + (cur.unreadCount || 1), 0);
@@ -808,22 +833,43 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
           </button>
         </div>
 
-        {/* Quick Action: メインタブ表示時に低優先未読を一発全既読にするボタン */}
-        {activeTab === 'main' && mentionOnlyUnreadList.length > 0 && (
+        {/* 右側: 未読のみトグル & Quick Action */}
+        <div className="flex items-center space-x-2">
+          {/* 未読のみ表示トグル */}
           <button
-            onClick={handleMarkMentionOnlyAsRead}
-            disabled={isMarkingMentionOnlyRead}
-            className="flex items-center space-x-1 text-[10px] sm:text-[11px] text-amber-400/90 hover:text-amber-300 bg-amber-950/40 hover:bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded transition-colors disabled:opacity-50"
-            title="「メンションのみ追う」設定のチャンネルをすべて一発で既読にします"
+            onClick={() => setShowUnreadOnly((v) => !v)}
+            className={`flex items-center space-x-1 text-[10px] sm:text-[11px] px-2 py-0.5 rounded border transition-colors ${
+              showUnreadOnly
+                ? 'bg-sky-950/80 border-sky-700/80 text-sky-300 hover:bg-sky-900/80'
+                : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+            }`}
+            title={showUnreadOnly ? '全ログを表示する' : '未読メッセージのみ表示する'}
           >
-            {isMarkingMentionOnlyRead ? (
-              <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+            {showUnreadOnly ? (
+              <Eye className="w-3 h-3 text-sky-400" />
             ) : (
-              <BellOff className="w-3 h-3 text-amber-400" />
+              <EyeOff className="w-3 h-3" />
             )}
-            <span>低優先({mentionOnlyUnreadList.length})を一括既読</span>
+            <span>{showUnreadOnly ? '未読のみ' : '全ログ'}</span>
           </button>
-        )}
+
+          {/* Quick Action: メインタブ表示時に低優先未読を一発全既読にするボタン */}
+          {activeTab === 'main' && mentionOnlyUnreadList.length > 0 && (
+            <button
+              onClick={handleMarkMentionOnlyAsRead}
+              disabled={isMarkingMentionOnlyRead}
+              className="flex items-center space-x-1 text-[10px] sm:text-[11px] text-amber-400/90 hover:text-amber-300 bg-amber-950/40 hover:bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded transition-colors disabled:opacity-50"
+              title="「メンションのみ追う」設定のチャンネルをすべて一発で既読にします"
+            >
+              {isMarkingMentionOnlyRead ? (
+                <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+              ) : (
+                <BellOff className="w-3 h-3 text-amber-400" />
+              )}
+              <span>低優先({mentionOnlyUnreadList.length})を一括既読</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main Scroll Content */}
@@ -1033,21 +1079,42 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                     <div className="py-4 text-center text-xs text-zinc-500 italic">
                       未読メッセージはありません
                     </div>
-                  ) : (
-                    posts.map((post) => {
+                  ) : (() => {
+                    const lastViewed = state.member.last_viewed_at || 0;
+                    const visiblePosts = showUnreadOnly
+                      ? posts.filter((p) => p.create_at > lastViewed)
+                      : posts;
+
+                    if (visiblePosts.length === 0) {
+                      return (
+                        <div className="py-4 text-center text-xs text-zinc-500 italic">
+                          未読メッセージはありません
+                        </div>
+                      );
+                    }
+
+                    return visiblePosts.map((post) => {
                       const user = userCache[post.user_id];
                       const displayName = formatUserDisplayName(
                         user,
                         post.props?.override_username
                       );
                       const userColor = getUserColor(post.user_id, displayName);
+                      const isUnread = post.create_at > lastViewed;
 
                       return (
                         <div
                           key={post.id}
                           className={`group py-1 hover:bg-zinc-800/30 px-1 rounded transition-colors ${fontClass}`}
                         >
-                          <div className="flex items-baseline space-x-2">
+                          <div className="flex items-baseline space-x-1.5">
+                            {/* 未読ドット */}
+                            <span className="w-1.5 shrink-0 flex items-center justify-center self-center">
+                              {isUnread && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block" />
+                              )}
+                            </span>
+
                             {/* Timestamp */}
                             <span className="text-zinc-500 select-none shrink-0 font-mono text-[10px]">
                               [{formatTime(post.create_at)}]
@@ -1084,8 +1151,9 @@ export const UnreadCatchupViewer: React.FC<Props> = ({
                           </div>
                         </div>
                       );
-                    })
-                  )}
+                    });
+                  })()
+                  }
                 </div>
 
                 {/* Channel Footer Mark-As-Read Action */}
